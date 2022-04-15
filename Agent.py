@@ -7,15 +7,18 @@ class Agent(object):
     '''
     Agent has a map that updates as it explores.
     '''
-    def __init__(self, map_size) -> None:
-        self._map = np.zeros((map_size), dtype=int) # assume everything empty
-        self._pos = np.array([map_size[0]//2, map_size[1]//2], dtype=int) # agent initializes to center of map
+    def __init__(self, init_map_size, max_map_size) -> None:
+        self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
+        self._pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
+        self._map[self._pos[0], self._pos[1]] = ScanStatus.AGENT
+        self._max_map_size = max_map_size
         self._target = None
         self._path = None
         self._path_ind = None
 
     def print_map(self) -> None:
-        print(self._map)
+        for i in range(self._map.shape[0]):
+            print(self._map[i])
 
     def in_bounds(self, coord) -> bool:
         return coord[0] >= 0 and coord[0] < self._map.shape[0] and coord[1] >= 0 and coord[1] < self._map.shape[1]
@@ -33,6 +36,7 @@ class Agent(object):
 
     def move(self, dir, grid:Grid=None) -> bool:
         if grid is None or grid.agent_move(dir):
+            self._map[self._pos[0], self._pos[1]] = ScanStatus.EMPTY
             if dir == Direction.RIGHT: # right
                 self._pos += np.array([0,1])
             elif dir == Direction.DOWN: # down
@@ -41,6 +45,7 @@ class Agent(object):
                 self._pos += np.array([0,-1])
             elif dir == Direction.UP: # up
                 self._pos += np.array([-1,0])
+            self._map[self._pos[0], self._pos[1]] = ScanStatus.AGENT
             return True
         else:
             return False
@@ -64,16 +69,21 @@ class Agent(object):
         self._target = self._pos + target_pos
         while not self.in_bounds(self._target):
             self.expand_map()
-            self._target = self._pos + target_pos
+        self._map[self._target[0], self._target[1]] = ScanStatus.TARGET
 
-    def expand_map(self, factor=2) -> None:
+    def expand_map(self, factor=2) -> bool:
         '''
         Used when the current map is too small.
         '''
         new_shape = (int(self._map.shape[0]*factor), int(self._map.shape[1]*factor))
-        pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
-        self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=ScanStatus.EMPTY)
-        self._pos = self._pos + pad_widths
+        if new_shape[0] < self._max_map_size[0] and new_shape[1] < self._max_map_size[1]:
+            pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
+            self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=ScanStatus.EMPTY)
+            self._pos = self._pos + pad_widths
+            self._target = self._target + pad_widths
+            return True
+        else:
+            return False
 
     def _get_neighbors_inds(self, parent_ind) -> list:
         result = []
@@ -171,7 +181,7 @@ class Agent(object):
         '''
         Execute the planned path by taking the action that goes to the next point.
         '''
-        while np.sum(self._target - self._pos) != 0:
+        while np.sum(np.abs(self._target - self._pos)) != 0:
             # scan
             self.update_map(grid.scan(self.cone_of_vision()))
             # is path still valid
@@ -198,18 +208,40 @@ class Agent(object):
             if not (self._map[pos[0], pos[1]] == ScanStatus.EMPTY or self._map[pos[0], pos[1]] == ScanStatus.TARGET):
                 return False
         return True
-                
+
+    def find_target(self, grid: Grid) -> bool:
+        self.set_target(grid.relative_target_pos())
+
+        # search loop
+        reached_target = False
+        while not reached_target:
+            # plan
+            if not self.plan():
+                # if we can't find a path, expand the map and try again
+                # this assumes there are other empty spaces outside of current map scope
+                if self.expand_map():
+                    continue
+                else:
+                    print("Reached max map size before finding a valid path.")
+                    return False
+            # try to execute it
+            if not self.execute_path(grid):
+                # go back to planning
+                continue
+            else:
+                # if we fully executed the path, we've reached the target
+                return True
 
 
 if __name__ == "__main__":
-    G = Grid((10,10))
-    G._grid[5,2:9] = GridStatus.WALL
+    # G = Grid((10,10))
+    # G._grid[5,2:9] = GridStatus.WALL
     
-    G.place_agent(8,8)
-    G.place_target(0,4)
+    # G.place_agent(8,8)
+    # G.place_target(0,4)
 
-    A = Agent((5,5))
-    A.set_target(G.relative_target_pos())
+    # A = Agent((5,5),(20,20))
+    # A.set_target(G.relative_target_pos())
     # A._map[7,2:9] = ScanStatus.WALL
     # print(A._pos)
     # print(A._target)
@@ -231,13 +263,28 @@ if __name__ == "__main__":
     # print("After move and scan")
     # A.print_map()
 
-    planning_status = A.plan()
+    # planning_status = A.plan()
     # print("Path found:", planning_status)
     # print("Path in agent frame: \n", A.get_path_agent_frame())
     # print("Path in world frame: \n", A.get_path_agent_frame() + G.agent_pos)
 
-    print("Execute path success:", A.execute_path(G))
-    print("Final agent pos:", G.agent_pos)
-    print("Final target pos:", G.target_pos)
-    print("Final map: \n", A._map)
-    print("Final grid: \n", G._grid)
+    # print("Execute path success:", A.execute_path(G))
+    # print("Final agent pos:", G.agent_pos)
+    # print("Final target pos:", G.target_pos)
+    # print("Final map: \n", A._map)
+    # print("Final grid: \n", G._grid)
+
+    G = Grid((10,10))
+    G._grid[5,0:9] = GridStatus.WALL
+
+    G.place_agent(8,8)
+    G.place_target(0,4)
+
+    print("Initial grid:")
+    G.print_grid()
+
+    A = Agent(init_map_size=(5,5), max_map_size=(20,20))
+    print("Find status:", A.find_target(G))
+
+    print("Final grid")
+    G.print_grid()

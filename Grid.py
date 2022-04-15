@@ -7,6 +7,7 @@ class GridStatus(IntEnum):
     TARGET = 2
     AGENT = 3
     BOTH = 4
+    PREV_AGENT = 5
 
 class ScanStatus(IntEnum):
     OUT_OF_BOUNDS = -2
@@ -49,12 +50,15 @@ class Grid(object):
     def place_agent(self,row,col) -> bool:
         if self.in_bounds((row,col)) and self.not_wall((row,col)):
             if self.agent_pos is not None:
-                self._grid[self.agent_pos[0], self.agent_pos[1]] = 0
+                self._grid[self.agent_pos[0], self.agent_pos[1]] = GridStatus.PREV_AGENT
             if self._grid[row,col] == GridStatus.TARGET:
                 self._grid[row,col] = GridStatus.BOTH
             else:
                 self._grid[row,col] = GridStatus.AGENT
             self.agent_pos = np.array([row,col])
+            # in case we overwrote the target marker
+            if self.target_pos is not None:
+                self._grid[self.target_pos[0], self.target_pos[1]] = GridStatus.TARGET
             return True
         else:
             return False
@@ -62,7 +66,7 @@ class Grid(object):
     def place_target(self,row,col) -> None:
         if self.in_bounds((row,col)) and self.not_wall((row,col)):
             if self.target_pos is not None:
-                self._grid[self.target_pos[0], self.target_pos[1]] = 0
+                self._grid[self.target_pos[0], self.target_pos[1]] = GridStatus.EMPTY
             if self._grid[row,col] == GridStatus.AGENT:
                 self._grid[row,col] = GridStatus.BOTH
             else:
@@ -97,7 +101,7 @@ class Grid(object):
             coord = self.agent_pos + offset
             if not self.in_bounds(coord):
                 result.append((offset, ScanStatus.OUT_OF_BOUNDS))
-            elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.AGENT:
+            elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.AGENT or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
                 result.append((offset, ScanStatus.EMPTY))
             elif self._grid[coord[0],coord[1]] == GridStatus.WALL:
                 result.append((offset, ScanStatus.WALL))
@@ -112,7 +116,8 @@ class Grid(object):
         return self.target_pos - self.agent_pos
 
     def print_grid(self) -> None:
-        print(self._grid)
+        for i in range(self._grid.shape[0]):
+            print(self._grid[i])
 
 
 if __name__ == "__main__":
