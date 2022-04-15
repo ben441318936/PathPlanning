@@ -71,7 +71,7 @@ class Agent(object):
             self.expand_map()
         self._map[self._target[0], self._target[1]] = ScanStatus.TARGET
 
-    def expand_map(self, factor=2) -> bool:
+    def expand_map(self, factor=1.5) -> bool:
         '''
         Used when the current map is too small.
         '''
@@ -275,7 +275,7 @@ if __name__ == "__main__":
     # print("Final grid: \n", G._grid)
 
     G = Grid((10,10))
-    G._grid[5,0:9] = GridStatus.WALL
+    G._grid[5,0:10] = GridStatus.WALL
 
     G.place_agent(8,8)
     G.place_target(0,4)
@@ -283,8 +283,11 @@ if __name__ == "__main__":
     print("Initial grid:")
     G.print_grid()
 
-    A = Agent(init_map_size=(5,5), max_map_size=(20,20))
+    A = Agent(init_map_size=(5,5), max_map_size=(30,30))
     print("Find status:", A.find_target(G))
 
-    print("Final grid")
+    print("Final grid:")
     G.print_grid()
+
+    print("Final map:")
+    A.print_map()
