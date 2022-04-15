@@ -23,6 +23,13 @@ class Direction(IntEnum):
     LEFT = 2
     RIGHT = 3
 
+DirectionDict = {
+    (-1,0): Direction.UP,
+    (1,0): Direction.DOWN,
+    (0,-1): Direction.LEFT,
+    (0,1): Direction.RIGHT,
+}
+
 class Grid(object):
     '''
     Grid that represents the environment.
@@ -33,8 +40,14 @@ class Grid(object):
         self.agent_pos = None
         self.target_pos = None
 
+    def in_bounds(self,coord) -> bool:
+        return coord[0] >= 0 and coord[0] < self._grid.shape[0] and coord[1] >= 0 and coord[1] < self._grid.shape[1]
+
+    def not_wall(self,coord) -> bool:
+        return self._grid[coord[0],coord[1]] != GridStatus.WALL
+
     def place_agent(self,row,col) -> bool:
-        if row >= 0 and row < self._grid.shape[0] and col >= 0 and col < self._grid.shape[1] and self._grid[row,col] != GridStatus.WALL:
+        if self.in_bounds((row,col)) and self.not_wall((row,col)):
             if self.agent_pos is not None:
                 self._grid[self.agent_pos[0], self.agent_pos[1]] = 0
             if self._grid[row,col] == GridStatus.TARGET:
@@ -47,7 +60,7 @@ class Grid(object):
             return False
 
     def place_target(self,row,col) -> None:
-        if row >= 0 and row < self._grid.shape[0] and col >= 0 and col < self._grid.shape[1] and self._grid[row,col] != GridStatus.WALL:
+        if self.in_bounds((row,col)) and self.not_wall((row,col)):
             if self.target_pos is not None:
                 self._grid[self.target_pos[0], self.target_pos[1]] = 0
             if self._grid[row,col] == GridStatus.AGENT:
@@ -69,13 +82,10 @@ class Grid(object):
         elif dir == Direction.UP: # up
             coord = self.agent_pos + np.array([-1,0])
 
-        if self.not_wall(coord):
+        if self.in_bounds(coord) and self.not_wall(coord):
             return self.place_agent(coord[0], coord[1])
         else:
             return False
-
-    def not_wall(self,coord) -> bool:
-        return self._grid[coord[0],coord[1]] != 1
 
     def scan(self,area) -> list:
         '''
@@ -85,7 +95,7 @@ class Grid(object):
         result = []
         for offset in area:
             coord = self.agent_pos + offset
-            if coord[0] < 0 or coord[0] >= self._grid.shape[0] or coord[1] < 0 or coord[1] >= self._grid.shape[1]:
+            if not self.in_bounds(coord):
                 result.append((offset, ScanStatus.OUT_OF_BOUNDS))
             elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.AGENT:
                 result.append((offset, ScanStatus.EMPTY))
