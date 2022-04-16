@@ -1,4 +1,3 @@
-from hypothesis import target
 import numpy as np
 import sys
 
@@ -28,14 +27,19 @@ class Simulation(object):
                                 "white": (255,255,255), 
                                 "gray": (128,128,128),
                                 "blue": (0,0,255),
+                                "purple": (128,0,128),
                                 "green": (0,255,0),
                                 "yellow": (255,255,0),
                                 "brown": (205,133,63),
                                 "turquoise": (100,200,255),
                             }
 
-    def init_grid(self, grid_size, agent_pos=None, target_pos=None) -> None:
+    def init_grid(self, grid_size) -> None:
         self.grid = Grid(grid_size)
+
+    def fill_random_grid(self, agent_pos=None, target_pos=None, probability=0.3, seed=None) -> None:
+        np.random.seed(seed)
+        self.grid.fill_random_grid(probability)
         if agent_pos is None:
             self.grid.set_random_agent()
         else:
@@ -111,8 +115,12 @@ class Simulation(object):
 
         curr_corner = np.array([self.render_offset, self.render_offset])
 
+        cells = [] # used to store all the drawn rectangles
+
         for i in range(grid_size[0]):
+            cells.append([])
             for j in range(grid_size[1]):
+                # set cell fill color base on cell status
                 cell_status = self.grid.get_cell((i,j))
                 if cell_status == GridStatus.AGENT:
                     c = self.color_dict["blue"]
@@ -126,19 +134,35 @@ class Simulation(object):
                     c = self.color_dict["brown"]
                 else:
                     c = self.color_dict["black"]
+                # set location
+                rect = pygame.Rect(curr_corner[0], curr_corner[1], cell_width, cell_width)
+                cells[-1].append(rect)
                 # draw the cell
-                pygame.draw.rect(self.screen, c, pygame.Rect(curr_corner[0], curr_corner[1], cell_width, cell_width))
+                pygame.draw.rect(self.screen, c, rect)
                 # draw cell border
-                pygame.draw.rect(self.screen, self.color_dict["gray"], pygame.Rect(curr_corner[0], curr_corner[1], cell_width, cell_width), 1)
+                pygame.draw.rect(self.screen, self.color_dict["gray"], rect, 1)
                 curr_corner += np.array([cell_width,0])
             curr_corner[0] = self.render_offset
             curr_corner += np.array([0,cell_width])
 
-            # draw the scan border
-            corner = np.array([self.render_offset, self.render_offset])
-            corner += np.array([self.grid.agent_pos[1]-1, self.grid.agent_pos[0]-1]) * cell_width
-            scan_width = 3 * cell_width
-            pygame.draw.rect(self.screen, self.color_dict["red"], pygame.Rect(corner[0], corner[1], scan_width, scan_width), 2)
+        # draw the scan border
+        corner = np.array([self.render_offset, self.render_offset])
+        corner += np.array([self.grid.agent_pos[1]-1, self.grid.agent_pos[0]-1]) * cell_width
+        scan_width = 3 * cell_width
+        pygame.draw.rect(self.screen, self.color_dict["red"], pygame.Rect(corner[0], corner[1], scan_width, scan_width), 2)
+
+        # draw the agent's planned path
+        path = self.agent.get_path_agent_frame()
+        if path.shape[0] != 0:
+            path = self.grid.translate_path_to_world_frame(path)
+            for k in range(path.shape[0]-1):
+                curr_coord = path[k]
+                next_coord = path[k+1]
+                if self.grid.in_bounds(curr_coord) and self.grid.in_bounds(next_coord):
+                    pygame.draw.line(self.screen, self.color_dict["purple"], 
+                        cells[curr_coord[0]][curr_coord[1]].center, cells[next_coord[0]][next_coord[1]].center, 3)
+                else:
+                    break
 
     def render_frame(self) -> None:
         for event in pygame.event.get():
@@ -152,10 +176,18 @@ if __name__ == "__main__":
     sim = Simulation(render=True, window_size=(500, 500), FPS=5)
     map_size = 20
     sim.init_grid((map_size, map_size))
+    sim.fill_random_grid(probability=0.32, seed=1)
     sim.init_agent((5,5), (map_size*3, map_size*3))
 
-    # sim.grid.set_obstacle((5,slice(0,9,None)))
-    sim.grid.set_random_obstacle(0.3)
+    sim.render_frame()
+
+    started = False
+    while not started:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT: 
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN: 
+                started = True
     
     # print("Initial grid:")
     # sim.grid.print_grid()
@@ -167,7 +199,8 @@ if __name__ == "__main__":
 
     while True:
         for event in pygame.event.get():
-            if event.type == pygame.QUIT: sys.exit()
+            if event.type == pygame.QUIT: 
+                sys.exit()
 
     # print("Final grid:")
     # sim.grid.print_grid()

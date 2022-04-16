@@ -59,13 +59,13 @@ class Grid(object):
     def set_obstacle(self, ind_slices) -> None:
         self._grid[ind_slices] = GridStatus.WALL
 
-    def set_random_obstacle(self, probability) -> None:
+    def fill_random_grid(self, probability) -> None:
         sample = np.random.random_sample(self._grid.shape)
         walls = sample < probability
         self._grid[walls==True] = GridStatus.WALL
         self._grid[walls==False] = GridStatus.EMPTY
-        self.place_target(self.target_pos, force=True)
-        self.place_agent(self.agent_pos, force=True)
+        # self.place_target(self.target_pos, force=True)
+        # self.place_agent(self.agent_pos, force=True)
 
     def set_random_target(self) -> None:
         self.target_pos = np.zeros((2), dtype=int)
@@ -152,6 +152,9 @@ class Grid(object):
         Returns the position of the target relative to the agent.
         '''
         return self.target_pos - self.agent_pos
+
+    def translate_path_to_world_frame(self, path) -> np.ndarray:
+        return path + self.agent_pos
 
     def print_grid(self) -> None:
         for i in range(self._grid.shape[0]):
