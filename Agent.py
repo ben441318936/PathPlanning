@@ -197,7 +197,6 @@ class Agent(object):
             if self.expand_map():
                 continue
             else:
-                print("Reached max map size before finding a valid path.")
                 return False
         return True
 

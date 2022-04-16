@@ -41,6 +41,21 @@ class Grid(object):
         self.agent_pos = None
         self.target_pos = None
 
+    def size(self) -> tuple:
+        return self._grid.shape
+
+    def get_cell(self,pos) -> GridStatus:
+        return self._grid[pos]
+
+    def agent_reached_target(self) -> None:
+        return np.sum(np.abs(self.agent_pos - self.target_pos)) == 0
+
+    def in_bounds(self,coord) -> bool:
+        return coord[0] >= 0 and coord[0] < self._grid.shape[0] and coord[1] >= 0 and coord[1] < self._grid.shape[1]
+
+    def not_wall(self,coord) -> bool:
+        return self._grid[coord[0],coord[1]] != GridStatus.WALL
+
     def set_obstacle(self, ind_slices) -> None:
         self._grid[ind_slices] = GridStatus.WALL
 
@@ -52,14 +67,17 @@ class Grid(object):
         self.place_target(self.target_pos, force=True)
         self.place_agent(self.agent_pos, force=True)
 
-    def agent_reached_target(self) -> None:
-        return np.sum(np.abs(self.agent_pos - self.target_pos)) == 0
+    def set_random_target(self) -> None:
+        self.target_pos = np.zeros((2), dtype=int)
+        self.target_pos[0] = np.random.randint(0,self._grid.shape[0])
+        self.target_pos[1] = np.random.randint(0,self._grid.shape[1])
+        self.place_target(self.target_pos, force=True)
 
-    def in_bounds(self,coord) -> bool:
-        return coord[0] >= 0 and coord[0] < self._grid.shape[0] and coord[1] >= 0 and coord[1] < self._grid.shape[1]
-
-    def not_wall(self,coord) -> bool:
-        return self._grid[coord[0],coord[1]] != GridStatus.WALL
+    def set_random_agent(self) -> None:
+        self.agent_pos = np.zeros((2), dtype=int)
+        self.agent_pos[0] = np.random.randint(0,self._grid.shape[0])
+        self.agent_pos[1] = np.random.randint(0,self._grid.shape[1])
+        self.place_agent(self.agent_pos, force=True)
 
     def place_agent(self,pos,force=False) -> bool:
         # force allows us to override walls
