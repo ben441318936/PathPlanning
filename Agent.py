@@ -1,7 +1,17 @@
+from tkinter import BOTH
 import numpy as np
 from pqdict import pqdict
 
+from enum import IntEnum
+
 from Grid import Grid, Direction, DirectionDict, GridStatus, ScanStatus
+
+class MapStatus(IntEnum):
+    EMPTY = 0
+    OBSTACLE = 1
+    TARGET = 2
+    AGENT = 3
+    BOTH = 4
 
 class Agent(object):
     '''
@@ -10,7 +20,7 @@ class Agent(object):
     def __init__(self, init_map_size, max_map_size) -> None:
         self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
         self._pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
-        self._map[self._pos[0], self._pos[1]] = ScanStatus.AGENT
+        self._map[self._pos[0], self._pos[1]] = MapStatus.AGENT
         self._max_map_size = max_map_size
         self._target = None
         self._path = None
@@ -23,6 +33,9 @@ class Agent(object):
     def in_bounds(self, coord) -> bool:
         return coord[0] >= 0 and coord[0] < self._map.shape[0] and coord[1] >= 0 and coord[1] < self._map.shape[1]
 
+    def reached_target(self) -> bool:
+        return np.sum(np.abs(self._pos - self._target)) == 0
+
     def cone_of_vision(self) -> list:
         '''
         Area that the agent can see.
@@ -31,35 +44,41 @@ class Agent(object):
         '''
         # 9x9 area
         # can be in any order
-        area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2)]
+        area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2) if not (i==0 and j==0)]
         return area
 
-    def move(self, dir, grid:Grid=None) -> bool:
-        if grid is None or grid.agent_move(dir):
-            self._map[self._pos[0], self._pos[1]] = ScanStatus.EMPTY
-            if dir == Direction.RIGHT: # right
-                self._pos += np.array([0,1])
-            elif dir == Direction.DOWN: # down
-                self._pos += np.array([1,0])
-            elif dir == Direction.LEFT: # left
-                self._pos += np.array([0,-1])
-            elif dir == Direction.UP: # up
-                self._pos += np.array([-1,0])
-            self._map[self._pos[0], self._pos[1]] = ScanStatus.AGENT
-            return True
+    def move(self, dir) -> bool:
+        if self._map[self._pos[0], self._pos[1]] == MapStatus.BOTH:
+            self._map[self._pos[0], self._pos[1]] = MapStatus.TARGET
         else:
+            self._map[self._pos[0], self._pos[1]] = MapStatus.EMPTY
+        if dir == Direction.RIGHT: # right
+            self._pos += np.array([0,1])
+        elif dir == Direction.DOWN: # down
+            self._pos += np.array([1,0])
+        elif dir == Direction.LEFT: # left
+            self._pos += np.array([0,-1])
+        elif dir == Direction.UP: # up
+            self._pos += np.array([-1,0])
+        if self._map[self._pos[0], self._pos[1]] == MapStatus.OBSTACLE:
+            print("Map does not match environment. Invalid move.")
             return False
+        elif self._map[self._pos[0], self._pos[1]] == MapStatus.TARGET:
+            self._map[self._pos[0], self._pos[1]] = MapStatus.BOTH
+        else:
+            self._map[self._pos[0], self._pos[1]] = MapStatus.AGENT
+        return True
 
     def update_map(self, scan_result) -> None:
         for res in scan_result:
             coord = self._pos + res[0]
             if self.in_bounds(coord):
-                if res[1] == ScanStatus.WALL or res[1] == ScanStatus.OBSTRUCTED or res[1] == ScanStatus.OUT_OF_BOUNDS:
-                    self._map[coord[0],coord[1]] = ScanStatus.WALL
-                elif res[1] == ScanStatus.TARGET or res[1] == ScanStatus.BOTH:
-                    self._map[coord[0],coord[1]] = ScanStatus.TARGET
-                else:
-                    self._map[coord[0],coord[1]] = ScanStatus.EMPTY
+                if res[1] == ScanStatus.WALL or res[1] == ScanStatus.OUT_OF_BOUNDS:
+                    self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
+                elif res[1] == ScanStatus.TARGET:
+                    self._map[coord[0],coord[1]] = MapStatus.TARGET
+                elif res[1] == ScanStatus.EMPTY:
+                    self._map[coord[0],coord[1]] = MapStatus.EMPTY
 
     def set_target(self, target_pos) -> None:
         '''
@@ -69,7 +88,7 @@ class Agent(object):
         self._target = self._pos + target_pos
         while not self.in_bounds(self._target):
             self.expand_map()
-        self._map[self._target[0], self._target[1]] = ScanStatus.TARGET
+        self._map[self._target[0], self._target[1]] = MapStatus.TARGET
 
     def expand_map(self, factor=1.5) -> bool:
         '''
@@ -78,7 +97,7 @@ class Agent(object):
         new_shape = (int(self._map.shape[0]*factor), int(self._map.shape[1]*factor))
         if new_shape[0] < self._max_map_size[0] and new_shape[1] < self._max_map_size[1]:
             pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
-            self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=ScanStatus.EMPTY)
+            self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=MapStatus.EMPTY)
             self._pos = self._pos + pad_widths
             self._target = self._target + pad_widths
             return True
@@ -92,7 +111,7 @@ class Agent(object):
             for j in range(-1,2):
                 pos = parent_pos + np.array([i,j])
                 if (not (i == 0 and j == 0)) and (i == 0 or j == 0) and self.in_bounds(pos):
-                    if self._map[pos[0], pos[1]] != ScanStatus.WALL:
+                    if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
                         result.append(np.ravel_multi_index(pos, self._map.shape))
         return result
 
@@ -103,11 +122,11 @@ class Agent(object):
             for j in range(-1,2):
                 pos = parent_pos + np.array([i,j])
                 if (not (i == 0 and j == 0)) and (i == 0 or j == 0) and self.in_bounds(pos):
-                    if self._map[pos[0], pos[1]] != ScanStatus.WALL:
+                    if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
                         result.append(1)
         return result
-    
-    def plan(self) -> bool:
+
+    def weighted_A_star(self) -> bool:
         '''
         Assume that the current map is correct, plan a path to the target.
         Using weighted A* with Euclidean distance as heuristic.
@@ -171,123 +190,46 @@ class Agent(object):
         self._path_ind = 0
         return done
 
+    def plan(self) -> bool:
+        while not self.weighted_A_star():
+            # if we can't find a path, expand the map and try again
+            # this assumes there are other empty spaces outside of current map scope
+            if self.expand_map():
+                continue
+            else:
+                print("Reached max map size before finding a valid path.")
+                return False
+        return True
+
     def get_path_agent_frame(self) -> np.ndarray:
         if self._path is not None:
             return self._path - self._pos
         else:
             return np.array([])
 
-    def execute_path(self, grid:Grid) -> bool:
+    def next_action(self) -> np.ndarray:
         '''
-        Execute the planned path by taking the action that goes to the next point.
+        Returns the next action according to the path.
         '''
-        while np.sum(np.abs(self._target - self._pos)) != 0:
-            # scan
-            self.update_map(grid.scan(self.cone_of_vision()))
-            # is path still valid
-            if not self.path_valid():
-                return False
-            # if valid, try to take next step
-            next_pos = self._path[self._path_ind]
-            if np.sum(next_pos - self._pos) != 0:
-                dir = DirectionDict[tuple(next_pos-self._pos)]
-                # for some reason the map does not allow us to move there
-                # something wrong with the scan
-                if not self.move(dir, grid):
-                    print("MAP DOES NOT MATCH GRID")
-                    return False
-            self._path_ind += 1
-        return True
+        next_pos = self._path[self._path_ind+1]
+        return DirectionDict[tuple(next_pos-self._pos)]
+
+    def take_next_action(self) -> bool:
+        self._path_ind += 1
+        next_pos = self._path[self._path_ind]
+        return self.move(DirectionDict[tuple(next_pos-self._pos)])
 
     def path_valid(self) -> bool:
         '''
         Check if next steps in path is valid according to updated map
         '''
+        if self._path is None:
+            # doesn't have a path yet
+            return False
         for i in range(self._path_ind, len(self._path)):
             pos = self._path[i]
-            if not (self._map[pos[0], pos[1]] == ScanStatus.EMPTY or self._map[pos[0], pos[1]] == ScanStatus.TARGET):
+            if self._map[pos[0], pos[1]] == MapStatus.OBSTACLE:
                 return False
         return True
 
-    def find_target(self, grid: Grid) -> bool:
-        self.set_target(grid.relative_target_pos())
-
-        # search loop
-        reached_target = False
-        while not reached_target:
-            # plan
-            if not self.plan():
-                # if we can't find a path, expand the map and try again
-                # this assumes there are other empty spaces outside of current map scope
-                if self.expand_map():
-                    continue
-                else:
-                    print("Reached max map size before finding a valid path.")
-                    return False
-            # try to execute it
-            if not self.execute_path(grid):
-                # go back to planning
-                continue
-            else:
-                # if we fully executed the path, we've reached the target
-                return True
-
-
-if __name__ == "__main__":
-    # G = Grid((10,10))
-    # G._grid[5,2:9] = GridStatus.WALL
-    
-    # G.place_agent(8,8)
-    # G.place_target(0,4)
-
-    # A = Agent((5,5),(20,20))
-    # A.set_target(G.relative_target_pos())
-    # A._map[7,2:9] = ScanStatus.WALL
-    # print(A._pos)
-    # print(A._target)
-    # print(A._map)
-
-    # print("Initial map")
-    # A.print_map()
-    # A.update_map(G.scan(A.cone_of_vision()))
-    # print("After scan")
-    # A.print_map()
-
-    # A.move(Direction.UP, grid=G)
-    # A.update_map(G.scan(A.cone_of_vision()))
-    # print("After move and scan")
-    # A.print_map()
-
-    # A.move(Direction.UP, grid=G)
-    # A.update_map(G.scan(A.cone_of_vision()))
-    # print("After move and scan")
-    # A.print_map()
-
-    # planning_status = A.plan()
-    # print("Path found:", planning_status)
-    # print("Path in agent frame: \n", A.get_path_agent_frame())
-    # print("Path in world frame: \n", A.get_path_agent_frame() + G.agent_pos)
-
-    # print("Execute path success:", A.execute_path(G))
-    # print("Final agent pos:", G.agent_pos)
-    # print("Final target pos:", G.target_pos)
-    # print("Final map: \n", A._map)
-    # print("Final grid: \n", G._grid)
-
-    G = Grid((10,10))
-    G._grid[5,0:10] = GridStatus.WALL
-
-    G.place_agent(8,8)
-    G.place_target(0,4)
-
-    print("Initial grid:")
-    G.print_grid()
-
-    A = Agent(init_map_size=(5,5), max_map_size=(30,30))
-    print("Find status:", A.find_target(G))
-
-    print("Final grid:")
-    G.print_grid()
-
-    print("Final map:")
-    A.print_map()
+ 

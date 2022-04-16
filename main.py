@@ -14,7 +14,7 @@ screen = pygame.display.set_mode(size)
 ball_pos = np.array([50,50])
 ball_radius = 10
 
-while 1:
+while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT: sys.exit()
 

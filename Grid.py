@@ -12,11 +12,11 @@ class GridStatus(IntEnum):
 class ScanStatus(IntEnum):
     OUT_OF_BOUNDS = -2
     OBSTRUCTED = -1
-    EMPTY = GridStatus.EMPTY
-    WALL = GridStatus.WALL
-    TARGET = GridStatus.TARGET
-    AGENT = GridStatus.AGENT
-    BOTH = GridStatus.BOTH
+    EMPTY = 0
+    WALL = 1
+    TARGET = 2
+    AGENT = 3
+    BOTH = 4
 
 class Direction(IntEnum):
     UP = 0
@@ -41,14 +41,31 @@ class Grid(object):
         self.agent_pos = None
         self.target_pos = None
 
+    def set_obstacle(self, ind_slices) -> None:
+        self._grid[ind_slices] = GridStatus.WALL
+
+    def set_random_obstacle(self, probability) -> None:
+        sample = np.random.random_sample(self._grid.shape)
+        walls = sample < probability
+        self._grid[walls==True] = GridStatus.WALL
+        self._grid[walls==False] = GridStatus.EMPTY
+        self.place_target(self.target_pos, force=True)
+        self.place_agent(self.agent_pos, force=True)
+
+    def agent_reached_target(self) -> None:
+        return np.sum(np.abs(self.agent_pos - self.target_pos)) == 0
+
     def in_bounds(self,coord) -> bool:
         return coord[0] >= 0 and coord[0] < self._grid.shape[0] and coord[1] >= 0 and coord[1] < self._grid.shape[1]
 
     def not_wall(self,coord) -> bool:
         return self._grid[coord[0],coord[1]] != GridStatus.WALL
 
-    def place_agent(self,row,col) -> bool:
-        if self.in_bounds((row,col)) and self.not_wall((row,col)):
+    def place_agent(self,pos,force=False) -> bool:
+        # force allows us to override walls
+        row = pos[0]
+        col = pos[1]
+        if self.in_bounds((row,col)) and (force or self.not_wall((row,col))):
             if self.agent_pos is not None:
                 self._grid[self.agent_pos[0], self.agent_pos[1]] = GridStatus.PREV_AGENT
             if self._grid[row,col] == GridStatus.TARGET:
@@ -56,15 +73,14 @@ class Grid(object):
             else:
                 self._grid[row,col] = GridStatus.AGENT
             self.agent_pos = np.array([row,col])
-            # in case we overwrote the target marker
-            if self.target_pos is not None:
-                self._grid[self.target_pos[0], self.target_pos[1]] = GridStatus.TARGET
             return True
         else:
             return False
 
-    def place_target(self,row,col) -> None:
-        if self.in_bounds((row,col)) and self.not_wall((row,col)):
+    def place_target(self,pos,force=False) -> None:
+        row = pos[0]
+        col = pos[1]
+        if self.in_bounds((row,col)) and (force or self.not_wall((row,col))):
             if self.target_pos is not None:
                 self._grid[self.target_pos[0], self.target_pos[1]] = GridStatus.EMPTY
             if self._grid[row,col] == GridStatus.AGENT:
@@ -87,7 +103,7 @@ class Grid(object):
             coord = self.agent_pos + np.array([-1,0])
 
         if self.in_bounds(coord) and self.not_wall(coord):
-            return self.place_agent(coord[0], coord[1])
+            return self.place_agent(coord)
         else:
             return False
 
@@ -101,12 +117,16 @@ class Grid(object):
             coord = self.agent_pos + offset
             if not self.in_bounds(coord):
                 result.append((offset, ScanStatus.OUT_OF_BOUNDS))
-            elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.AGENT or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
+            elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
                 result.append((offset, ScanStatus.EMPTY))
-            elif self._grid[coord[0],coord[1]] == GridStatus.WALL:
-                result.append((offset, ScanStatus.WALL))
-            elif self._grid[coord[0],coord[1]] == GridStatus.TARGET or self._grid[coord[0],coord[1]] == GridStatus.BOTH:
-                result.append((offset, ScanStatus.TARGET))
+            else:
+                result.append((offset, self._grid[coord[0],coord[1]]))
+            # elif self._grid[coord[0],coord[1]] == GridStatus.AGENT:
+            #     result.append((offset, GridStatus.AGENT))
+            # elif self._grid[coord[0],coord[1]] == GridStatus.WALL:
+            #     result.append((offset, ScanStatus.WALL))
+            # elif self._grid[coord[0],coord[1]] == GridStatus.TARGET or self._grid[coord[0],coord[1]] == GridStatus.BOTH:
+            #     result.append((offset, ScanStatus.TARGET))
         return result
 
     def relative_target_pos(self) -> None:
@@ -124,8 +144,8 @@ if __name__ == "__main__":
     G = Grid((10,10))
     print("Initialization")
     G.print_grid()
-    G.place_agent(3,3)
-    G.place_target(2,2)
+    G.place_agent((3,3))
+    G.place_target((2,2))
     print("After placement")
     G.print_grid()
     G.agent_move(Direction.UP)
