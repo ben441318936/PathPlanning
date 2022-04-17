@@ -19,12 +19,18 @@ class Agent(object):
     '''
     def __init__(self, init_map_size, max_map_size) -> None:
         self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
-        self._pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
-        self._map[self._pos[0], self._pos[1]] = MapStatus.AGENT
+        self.pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
+        self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
         self._max_map_size = max_map_size
-        self._target = None
+        self.target = None
         self._path = None
         self._path_ind = None
+
+    def size(self) -> tuple:
+        return self._map.shape
+
+    def get_cell(self,pos) -> MapStatus:
+        return self._map[pos[0],pos[1]]
 
     def print_map(self) -> None:
         for i in range(self._map.shape[0]):
@@ -34,7 +40,7 @@ class Agent(object):
         return coord[0] >= 0 and coord[0] < self._map.shape[0] and coord[1] >= 0 and coord[1] < self._map.shape[1]
 
     def reached_target(self) -> bool:
-        return np.sum(np.abs(self._pos - self._target)) == 0
+        return np.sum(np.abs(self.pos - self.target)) == 0
 
     def cone_of_vision(self) -> list:
         '''
@@ -48,30 +54,30 @@ class Agent(object):
         return area
 
     def move(self, dir) -> bool:
-        if self._map[self._pos[0], self._pos[1]] == MapStatus.BOTH:
-            self._map[self._pos[0], self._pos[1]] = MapStatus.TARGET
+        if self._map[self.pos[0], self.pos[1]] == MapStatus.BOTH:
+            self._map[self.pos[0], self.pos[1]] = MapStatus.TARGET
         else:
-            self._map[self._pos[0], self._pos[1]] = MapStatus.EMPTY
+            self._map[self.pos[0], self.pos[1]] = MapStatus.EMPTY
         if dir == Direction.RIGHT: # right
-            self._pos += np.array([0,1])
+            self.pos += np.array([0,1])
         elif dir == Direction.DOWN: # down
-            self._pos += np.array([1,0])
+            self.pos += np.array([1,0])
         elif dir == Direction.LEFT: # left
-            self._pos += np.array([0,-1])
+            self.pos += np.array([0,-1])
         elif dir == Direction.UP: # up
-            self._pos += np.array([-1,0])
-        if self._map[self._pos[0], self._pos[1]] == MapStatus.OBSTACLE:
+            self.pos += np.array([-1,0])
+        if self._map[self.pos[0], self.pos[1]] == MapStatus.OBSTACLE:
             print("Map does not match environment. Invalid move.")
             return False
-        elif self._map[self._pos[0], self._pos[1]] == MapStatus.TARGET:
-            self._map[self._pos[0], self._pos[1]] = MapStatus.BOTH
+        elif self._map[self.pos[0], self.pos[1]] == MapStatus.TARGET:
+            self._map[self.pos[0], self.pos[1]] = MapStatus.BOTH
         else:
-            self._map[self._pos[0], self._pos[1]] = MapStatus.AGENT
+            self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
         return True
 
     def update_map(self, scan_result) -> None:
         for res in scan_result:
-            coord = self._pos + res[0]
+            coord = self.pos + res[0]
             if self.in_bounds(coord):
                 if res[1] == ScanStatus.WALL or res[1] == ScanStatus.OUT_OF_BOUNDS:
                     self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
@@ -83,12 +89,12 @@ class Agent(object):
     def set_target(self, target_pos) -> None:
         '''
         Set target position relative to the current agent position.
-        After setting, self._map[self._target[0], self._target[1]] should be where the target is
+        After setting, self._map[self.target[0], self.target[1]] should be where the target is
         '''
-        self._target = self._pos + target_pos
-        while not self.in_bounds(self._target):
+        self.target = self.pos + target_pos
+        while not self.in_bounds(self.target):
             self.expand_map()
-        self._map[self._target[0], self._target[1]] = MapStatus.TARGET
+        self._map[self.target[0], self.target[1]] = MapStatus.TARGET
 
     def expand_map(self, factor=1.5) -> bool:
         '''
@@ -98,8 +104,8 @@ class Agent(object):
         if new_shape[0] < self._max_map_size[0] and new_shape[1] < self._max_map_size[1]:
             pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
             self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=MapStatus.EMPTY)
-            self._pos = self._pos + pad_widths
-            self._target = self._target + pad_widths
+            self.pos = self.pos + pad_widths
+            self.target = self.target + pad_widths
             return True
         else:
             return False
@@ -136,12 +142,12 @@ class Agent(object):
         # Initialize the data structures
         # Labels
         g = np.ones((self._map.shape[0] * self._map.shape[1])) * np.inf
-        start_ind = np.ravel_multi_index(self._pos, self._map.shape)
-        target_ind = np.ravel_multi_index(self._target, self._map.shape)
+        start_ind = np.ravel_multi_index(self.pos, self._map.shape)
+        target_ind = np.ravel_multi_index(self.target, self._map.shape)
         g[start_ind] = 0
         # Priority queue for OPEN list
         OPEN = pqdict({})
-        OPEN[start_ind] = g[start_ind] + eps * np.linalg.norm(self._pos - self._target)
+        OPEN[start_ind] = g[start_ind] + eps * np.linalg.norm(self.pos - self.target)
         # A regular list for CLOSED list
         CLOSED = []
         # Predecessor list to keep track of path
@@ -172,7 +178,7 @@ class Agent(object):
                         # This updates if child already in OPEN
                         # and appends to OPEN otherwise
                         child_pos = np.unravel_index(child_ind, self._map.shape)
-                        OPEN[child_ind] = g[child_ind] + eps * np.linalg.norm(child_pos - self._target)
+                        OPEN[child_ind] = g[child_ind] + eps * np.linalg.norm(child_pos - self.target)
 
         # We have found a path
         path = []
@@ -200,9 +206,16 @@ class Agent(object):
                 return False
         return True
 
+    def get_path(self) -> np.ndarray:
+        if self._path is not None:
+            return self._path
+        else:
+            return np.array([])
+
+
     def get_path_agent_frame(self) -> np.ndarray:
         if self._path is not None:
-            return self._path - self._pos
+            return self._path - self.pos
         else:
             return np.array([])
 
@@ -211,12 +224,12 @@ class Agent(object):
         Returns the next action according to the path.
         '''
         next_pos = self._path[self._path_ind+1]
-        return DirectionDict[tuple(next_pos-self._pos)]
+        return DirectionDict[tuple(next_pos-self.pos)]
 
     def take_next_action(self) -> bool:
         self._path_ind += 1
         next_pos = self._path[self._path_ind]
-        return self.move(DirectionDict[tuple(next_pos-self._pos)])
+        return self.move(DirectionDict[tuple(next_pos-self.pos)])
 
     def path_valid(self) -> bool:
         '''

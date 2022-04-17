@@ -1,18 +1,22 @@
+from collections import namedtuple
 import numpy as np
 import sys
 
 import pygame
-from Agent import Agent
+from Agent import Agent, MapStatus
 from Grid import Grid, GridStatus
 
+Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
+
 class Simulation(object):
-    def __init__(self, render=False, window_size=None, FPS=None, render_offset=0) -> None:
+    def __init__(self, render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
         self.agent = None
         self.grid = None
         self.render = render
         self.window_size = window_size
         self.FPS = FPS
-        self.render_offset = render_offset
+        self.render_offset = render_offset # (top,bottom,left,right)
+        self.center_col_width = center_col_width
 
         if render and (window_size is None or FPS is None):
             print("Render set to True, but no render parameters given.")
@@ -102,18 +106,17 @@ class Simulation(object):
         if not finished:
             print("Sim loop exited without agent reaching target.")
 
-    def draw_map(self) -> None:
-        self.screen.fill(self.color_dict["black"])
-
+    def draw_grid(self, grid_rect) -> None:
         grid_size = self.grid.size()
 
         # compute grid cell sizing
         # in pygame, first coordinate is horizontal
-        horizontal_width = (self.window_size[0] - (2 * self.render_offset)) // grid_size[1]
-        vertical_width = (self.window_size[1] - (2 * self.render_offset)) // grid_size[0]
+        horizontal_width = grid_rect.width // grid_size[1]
+        vertical_width = grid_rect.height // grid_size[0]
+
         cell_width = min(horizontal_width, vertical_width)
 
-        curr_corner = np.array([self.render_offset, self.render_offset])
+        curr_corner = np.array([grid_rect.left, grid_rect.top])
 
         cells = [] # used to store all the drawn rectangles
 
@@ -142,11 +145,11 @@ class Simulation(object):
                 # draw cell border
                 pygame.draw.rect(self.screen, self.color_dict["gray"], rect, 1)
                 curr_corner += np.array([cell_width,0])
-            curr_corner[0] = self.render_offset
+            curr_corner[0] = grid_rect.left
             curr_corner += np.array([0,cell_width])
 
         # draw the scan border
-        corner = np.array([self.render_offset, self.render_offset])
+        corner = np.array([grid_rect.left, grid_rect.top])
         corner += np.array([self.grid.agent_pos[1]-1, self.grid.agent_pos[0]-1]) * cell_width
         scan_width = 3 * cell_width
         pygame.draw.rect(self.screen, self.color_dict["red"], pygame.Rect(corner[0], corner[1], scan_width, scan_width), 2)
@@ -164,16 +167,118 @@ class Simulation(object):
                 else:
                     break
 
+    def draw_map(self, map_rect) -> None:
+        map_size = self.agent.size()
+
+        # compute grid cell sizing
+        # in pygame, first coordinate is horizontal
+        horizontal_width = map_rect.width // map_size[1]
+        vertical_width = map_rect.height // map_size[0]
+
+        cell_width = min(horizontal_width, vertical_width)
+
+        curr_corner = np.array([map_rect.left, map_rect.top])
+
+        cells = [] # used to store all the drawn rectangles
+
+        for i in range(map_size[0]):
+            cells.append([])
+            for j in range(map_size[1]):
+                # set cell fill color base on cell status
+                cell_status = self.agent.get_cell((i,j))
+                if cell_status == MapStatus.AGENT:
+                    c = self.color_dict["blue"]
+                elif cell_status == MapStatus.TARGET:
+                    c = self.color_dict["green"]
+                elif cell_status == MapStatus.BOTH:
+                    c = self.color_dict["yellow"]
+                elif cell_status == MapStatus.OBSTACLE:
+                    c = self.color_dict["brown"]
+                else:
+                    c = self.color_dict["black"]
+                # set location
+                rect = pygame.Rect(curr_corner[0], curr_corner[1], cell_width, cell_width)
+                cells[-1].append(rect)
+                # draw the cell
+                pygame.draw.rect(self.screen, c, rect)
+                # draw cell border
+                pygame.draw.rect(self.screen, self.color_dict["gray"], rect, 1)
+                curr_corner += np.array([cell_width,0])
+            curr_corner[0] = map_rect.left
+            curr_corner += np.array([0,cell_width])
+
+        # draw the scan border
+        corner = np.array([map_rect.left, map_rect.top])
+        corner += np.array([self.agent.pos[1]-1, self.agent.pos[0]-1]) * cell_width
+        scan_width = 3 * cell_width
+        pygame.draw.rect(self.screen, self.color_dict["red"], pygame.Rect(corner[0], corner[1], scan_width, scan_width), 2)
+
+        # draw the agent's planned path
+        path = self.agent.get_path()
+        if path.shape[0] != 0:
+            for k in range(path.shape[0]-1):
+                curr_coord = path[k]
+                next_coord = path[k+1]
+                if self.agent.in_bounds(curr_coord) and self.agent.in_bounds(next_coord):
+                    pygame.draw.line(self.screen, self.color_dict["purple"], 
+                        cells[curr_coord[0]][curr_coord[1]].center, cells[next_coord[0]][next_coord[1]].center, 3)
+                else:
+                    break
+
     def render_frame(self) -> None:
         for event in pygame.event.get():
             if event.type == pygame.QUIT: sys.exit()
-        self.draw_map()
+
+        # clear window
+        self.screen.fill(self.color_dict["black"])
+
+        sub_figure_width = (self.window_size[0] - (self.render_offset.left + self.render_offset.right) - self.center_col_width) // 2
+        sub_fugure_height = self.window_size[1] - (self.render_offset.top + self.render_offset.bottom)
+
+        # draw the grid status
+        grid_rect = pygame.Rect(self.render_offset.left, self.render_offset.top, 
+                                sub_figure_width, 
+                                sub_fugure_height)
+        self.draw_grid(grid_rect)
+
+        # grid status label text
+        grid_label_rect = pygame.Rect(0, 0, (self.window_size[0]-self.center_col_width)//2, self.render_offset.top)
+        self.screen.fill(self.color_dict["black"], grid_label_rect)
+        my_font = pygame.font.SysFont("Times New Roman", 30)
+        my_text = my_font.render("Grid Environment Status", True, self.color_dict["white"])
+        my_rect = my_text.get_rect()
+        width = my_rect.width
+        height = my_rect.height
+        self.screen.blit(my_text, (grid_label_rect.centerx - width//2, grid_label_rect.centery - height//2))
+
+        # draw center column
+        pygame.draw.rect(self.screen, self.color_dict["black"], 
+                pygame.Rect((self.window_size[0]-self.center_col_width)//2, 0, self.center_col_width, self.window_size[1]))
+
+        # draw the agent's map
+        map_rect = pygame.Rect(sub_figure_width + self.center_col_width,
+                                self.render_offset.top, 
+                                sub_figure_width, 
+                                sub_fugure_height)
+        self.draw_map(map_rect)
+
+        # map status label text
+        map_label_rect = pygame.Rect((self.window_size[0]-self.center_col_width)//2 + self.center_col_width, 0,
+                                        (self.window_size[0]-self.center_col_width)//2, self.render_offset.top)
+        self.screen.fill(self.color_dict["black"], map_label_rect)
+        my_font = pygame.font.SysFont("Times New Roman", 30)
+        my_text = my_font.render("Agent Map", True, self.color_dict["white"])
+        my_rect = my_text.get_rect()
+        width = my_rect.width
+        height = my_rect.height
+        self.screen.blit(my_text, (map_label_rect.centerx - width//2, map_label_rect.centery - height//2))
+
         pygame.display.flip()
         self.clock.tick(self.FPS)
 
 
 if __name__ == "__main__":
-    sim = Simulation(render=True, window_size=(500, 500), FPS=5)
+    sim = Simulation(render=True, window_size=(1050, 550), FPS=5, render_offset=Offset(50,0,0,0), center_col_width=50)
     map_size = 20
     sim.init_grid((map_size, map_size))
     sim.fill_random_grid(probability=0.32, seed=1)
