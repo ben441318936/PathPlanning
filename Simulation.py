@@ -53,11 +53,11 @@ class Simulation(object):
         else:
             self.grid.place_target(target_pos, force=True)
 
-    def init_agent(self, init_map_size, max_map_size) -> None:
+    def init_agent(self) -> None:
         if self.grid is None:
             print("No grid, can't initialize agent.")
             sys.exit()
-        self.agent = Agent(init_map_size, max_map_size)
+        self.agent = Agent()
         self.agent.set_target(self.grid.relative_target_pos())
 
     def reset(self) -> None:
@@ -276,11 +276,11 @@ class Simulation(object):
 
 
 if __name__ == "__main__":
-    sim = Simulation(render=True, window_size=(1050, 550), FPS=5, render_offset=Offset(50,0,0,0), center_col_width=50)
-    map_size = 20
-    sim.init_grid((map_size, map_size))
-    sim.fill_random_grid(probability=0.4, seed=1)
-    sim.init_agent((5,5), (map_size*5, map_size*5))
+    sim = Simulation(render=True, window_size=(1050, 550), FPS=60, render_offset=Offset(50,0,0,0), center_col_width=50)
+    map_width = map_height = 20
+    sim.init_grid((map_height, map_width))
+    sim.fill_random_grid(probability=0.5, seed=1)
+    sim.init_agent()
 
     sim.render_frame()
 

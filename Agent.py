@@ -1,10 +1,7 @@
-from tkinter import BOTH
 import numpy as np
 from pqdict import pqdict
 
 from enum import IntEnum
-
-from sklearn.metrics import consensus_score
 
 from Grid import Grid, Direction, Vec2Dir, Dir2Vec, GridStatus, ScanStatus
 
@@ -19,12 +16,12 @@ class Agent(object):
     '''
     Agent has a map that updates as it explores.
     '''
-    def __init__(self, init_map_size, max_map_size) -> None:
+    def __init__(self, init_map_size=(5,5)) -> None:
         self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
         self.pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
         self.init_pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int)
         self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
-        self._max_map_size = max_map_size
+        # self._max_map_size = max_map_size
         self.target = None
         self._path = None
         self._path_ind = None
@@ -99,15 +96,12 @@ class Agent(object):
         Used when the current map is too small.
         '''
         new_shape = (int(self._map.shape[0]*factor), int(self._map.shape[1]*factor))
-        if True: #new_shape[0] < self._max_map_size[0] and new_shape[1] < self._max_map_size[1]:
-            pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
-            self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=MapStatus.EMPTY)
-            self.pos = self.pos + pad_widths
-            self.init_pos = self.init_pos + pad_widths
-            self.target = self.target + pad_widths
-            return True
-        else:
-            return False
+        pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
+        self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=MapStatus.EMPTY)
+        self.pos = self.pos + pad_widths
+        self.init_pos = self.init_pos + pad_widths
+        self.target = self.target + pad_widths
+        return True
 
     def _get_neighbors_inds(self, parent_ind) -> list:
         result = []
@@ -139,7 +133,7 @@ class Agent(object):
         Using weighted A* with Euclidean distance as heuristic.
         This heuristic is consistent for all k-connected grid.
         '''
-        eps = 1
+        eps = 10
         # Initialize the data structures
         # Labels
         g = np.ones((self._map.shape[0] * self._map.shape[1])) * np.inf
@@ -149,8 +143,8 @@ class Agent(object):
         # Priority queue for OPEN list
         OPEN = pqdict({})
         OPEN[start_ind] = g[start_ind] + eps * np.linalg.norm(self.pos - self.target)
-        # A regular list for CLOSED list
-        CLOSED = []
+        # A regular dit for CLOSED list
+        # CLOSED = {}
         # Predecessor list to keep track of path
         pred = -np.ones((self._map.shape[0] * self._map.shape[1])).astype(int)
 
@@ -161,7 +155,7 @@ class Agent(object):
                 parent_ind = OPEN.popitem()[0]
             else:
                 break
-            # CLOSED.append(parent_ind)
+            # CLOSED[parent_ind] = 0
             if parent_ind == target_ind:
                 done = True
                 break
@@ -172,7 +166,8 @@ class Agent(object):
             children_costs = self._get_parent_children_costs(parent_ind)
             for j in range(len(children_inds)):
                 child_ind = children_inds[j]
-                if (not child_ind == -1): # and (not child_ind in CLOSED):
+                # if (not child_ind == -1) and (not child_ind in CLOSED):
+                if (not child_ind == -1):
                     if g[child_ind] > g[parent_ind] + children_costs[j]:
                         g[child_ind] = g[parent_ind] + children_costs[j]
                         pred[child_ind] = parent_ind
