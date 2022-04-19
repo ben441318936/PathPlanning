@@ -1,3 +1,4 @@
+from collections import namedtuple
 import numpy as np
 from pqdict import pqdict
 
@@ -11,6 +12,8 @@ class MapStatus(IntEnum):
     TARGET = 2
     AGENT = 3
     BOTH = 4
+
+ExpandWidths = namedtuple("ExpandWidths", ["top", "down", "left", "right"])
 
 class Agent(object):
     '''
@@ -73,13 +76,15 @@ class Agent(object):
     def update_map(self, scan_result) -> None:
         for res in scan_result:
             coord = self.pos + res[0]
-            if self.in_bounds(coord):
-                if res[1] == ScanStatus.OBSTACLE:
-                    self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
-                elif res[1] == ScanStatus.TARGET:
-                    self._map[coord[0],coord[1]] = MapStatus.TARGET
-                elif res[1] == ScanStatus.EMPTY:
-                    self._map[coord[0],coord[1]] = MapStatus.EMPTY
+            while not self.in_bounds(coord):
+                self.expand_map(self._get_expand_map_widths(coord))
+                coord = self.pos + res[0]
+            if res[1] == ScanStatus.OBSTACLE:
+                self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
+            elif res[1] == ScanStatus.TARGET:
+                self._map[coord[0],coord[1]] = MapStatus.TARGET
+            elif res[1] == ScanStatus.EMPTY:
+                self._map[coord[0],coord[1]] = MapStatus.EMPTY
 
     def set_target(self, target_pos) -> None:
         '''
@@ -88,19 +93,34 @@ class Agent(object):
         '''
         self.target = self.pos + target_pos
         while not self.in_bounds(self.target):
-            self.expand_map()
+            self.expand_map(self._get_expand_map_widths(self.target))
         self._map[self.target[0], self.target[1]] = MapStatus.TARGET
 
-    def expand_map(self, factor=1.5) -> bool:
+    def _get_expand_map_widths(self, pos) -> ExpandWidths:
+        widths = [0,0,0,0]
+        if pos[0] < 0:
+            widths[0] = -pos[0]
+        elif pos[0] >= self._map.shape[0]:
+            widths[1] = pos[0] - self._map.shape[0] + 1
+        if pos[1] < 0:
+            widths[2] = -pos[1]
+        elif pos[1] >= self._map.shape[1]:
+            widths[3] = pos[1] - self._map.shape[1] + 1
+        widths = ExpandWidths(widths[0], widths[1], widths[2], widths[3])
+        return widths
+
+    def expand_map(self, widths: ExpandWidths = ExpandWidths(1,1,1,1) ) -> bool:
         '''
         Used when the current map is too small.
+        wdiths (UP, DOWN, LEFT, RIGHT)
         '''
-        new_shape = (int(self._map.shape[0]*factor), int(self._map.shape[1]*factor))
-        pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
-        self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=MapStatus.EMPTY)
-        self.pos = self.pos + pad_widths
-        self.init_pos = self.init_pos + pad_widths
-        self.target = self.target + pad_widths
+        self._map = np.pad(self._map, ((widths.top, widths.down), (widths.left, widths.right)), constant_values=MapStatus.EMPTY)
+        pos_offsets = np.array([widths.top, widths.left])
+        self.pos = self.pos + pos_offsets
+        self.init_pos = self.init_pos + pos_offsets
+        self.target = self.target + pos_offsets
+        if self._path is not None and self._path.shape[0] != 0:
+            self._path += pos_offsets
         return True
 
     def _get_neighbors_inds(self, parent_ind) -> list:
@@ -195,13 +215,16 @@ class Agent(object):
     def plan(self) -> bool:
         consecutive_expand = 0
         while not self.weighted_A_star():
+            if np.sum(self._map[0,:]) + np.sum(self._map[-1,:]) + np.sum(self._map[:,0]) + np.sum(self._map[:,-1]) == 0:
+                print("Planning failed, expanding won't help.")
+                return False
             # if we can't find a path, expand the map and try again
             # this assumes there are other empty spaces outside of current map scope
+            if consecutive_expand > 0:
+                print("Planning still failed after expanding.")
+                return False
             if self.expand_map():
                 consecutive_expand += 1
-                if consecutive_expand > 1:
-                    print("Planning still failed after expanding.")
-                    return False
             else:
                 return False
         return True
@@ -213,7 +236,7 @@ class Agent(object):
             return np.array([])
 
     def get_path_agent_frame(self) -> np.ndarray:
-        if self._path is not None:
+        if self._path is not None and self._path.shape[0] != 0:
             return self._path - self.pos
         else:
             return np.array([])

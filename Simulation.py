@@ -279,7 +279,7 @@ if __name__ == "__main__":
     sim = Simulation(render=True, window_size=(1050, 550), FPS=60, render_offset=Offset(50,0,0,0), center_col_width=50)
     map_width = map_height = 20
     sim.init_grid((map_height, map_width))
-    sim.fill_random_grid(probability=0.5, seed=1)
+    sim.fill_random_grid(probability=0.3, seed=1)
     sim.init_agent()
 
     sim.render_frame()
@@ -299,6 +299,8 @@ if __name__ == "__main__":
     # sim.agent.print_map()
 
     sim.run_sim()
+
+    sim.render_frame()
 
     while True:
         for event in pygame.event.get():
