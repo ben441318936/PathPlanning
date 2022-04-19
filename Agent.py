@@ -4,7 +4,9 @@ from pqdict import pqdict
 
 from enum import IntEnum
 
-from Grid import Grid, Direction, DirectionDict, GridStatus, ScanStatus
+from sklearn.metrics import consensus_score
+
+from Grid import Grid, Direction, Vec2Dir, Dir2Vec, GridStatus, ScanStatus
 
 class MapStatus(IntEnum):
     EMPTY = 0
@@ -20,6 +22,7 @@ class Agent(object):
     def __init__(self, init_map_size, max_map_size) -> None:
         self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
         self.pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
+        self.init_pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int)
         self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
         self._max_map_size = max_map_size
         self.target = None
@@ -50,7 +53,7 @@ class Agent(object):
         '''
         # 9x9 area
         # can be in any order
-        area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2) if not (i==0 and j==0)]
+        area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2)]
         return area
 
     def move(self, dir) -> bool:
@@ -58,16 +61,11 @@ class Agent(object):
             self._map[self.pos[0], self.pos[1]] = MapStatus.TARGET
         else:
             self._map[self.pos[0], self.pos[1]] = MapStatus.EMPTY
-        if dir == Direction.RIGHT: # right
-            self.pos += np.array([0,1])
-        elif dir == Direction.DOWN: # down
-            self.pos += np.array([1,0])
-        elif dir == Direction.LEFT: # left
-            self.pos += np.array([0,-1])
-        elif dir == Direction.UP: # up
-            self.pos += np.array([-1,0])
+
+        self.pos += Dir2Vec[dir]
         if self._map[self.pos[0], self.pos[1]] == MapStatus.OBSTACLE:
-            print("Map does not match environment. Invalid move.")
+            print("Invalid move.")
+            self.pos -= Dir2Vec[dir]
             return False
         elif self._map[self.pos[0], self.pos[1]] == MapStatus.TARGET:
             self._map[self.pos[0], self.pos[1]] = MapStatus.BOTH
@@ -79,7 +77,7 @@ class Agent(object):
         for res in scan_result:
             coord = self.pos + res[0]
             if self.in_bounds(coord):
-                if res[1] == ScanStatus.WALL or res[1] == ScanStatus.OUT_OF_BOUNDS:
+                if res[1] == ScanStatus.OBSTACLE:
                     self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
                 elif res[1] == ScanStatus.TARGET:
                     self._map[coord[0],coord[1]] = MapStatus.TARGET
@@ -101,10 +99,11 @@ class Agent(object):
         Used when the current map is too small.
         '''
         new_shape = (int(self._map.shape[0]*factor), int(self._map.shape[1]*factor))
-        if new_shape[0] < self._max_map_size[0] and new_shape[1] < self._max_map_size[1]:
+        if True: #new_shape[0] < self._max_map_size[0] and new_shape[1] < self._max_map_size[1]:
             pad_widths = np.array([(new_shape[0]-self._map.shape[0])//2, (new_shape[1]-self._map.shape[1])//2])
             self._map = np.pad(self._map, ((pad_widths[0], pad_widths[0]), (pad_widths[1], pad_widths[1])), constant_values=MapStatus.EMPTY)
             self.pos = self.pos + pad_widths
+            self.init_pos = self.init_pos + pad_widths
             self.target = self.target + pad_widths
             return True
         else:
@@ -116,9 +115,9 @@ class Agent(object):
         for i in range(-1,2):
             for j in range(-1,2):
                 pos = parent_pos + np.array([i,j])
-                if (not (i == 0 and j == 0)) and (i == 0 or j == 0) and self.in_bounds(pos):
-                    if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
-                        result.append(np.ravel_multi_index(pos, self._map.shape))
+                if (not (i == 0 and j == 0)) and self.in_bounds(pos):
+                    # if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
+                    result.append(np.ravel_multi_index(pos, self._map.shape))
         return result
 
     def _get_parent_children_costs(self, parent_ind) -> list:
@@ -127,9 +126,11 @@ class Agent(object):
         for i in range(-1,2):
             for j in range(-1,2):
                 pos = parent_pos + np.array([i,j])
-                if (not (i == 0 and j == 0)) and (i == 0 or j == 0) and self.in_bounds(pos):
+                if (not (i == 0 and j == 0)) and self.in_bounds(pos):
                     if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
-                        result.append(1)
+                        result.append(np.linalg.norm(np.array([i,j])))
+                    else:
+                        result.append(np.inf)
         return result
 
     def weighted_A_star(self) -> bool:
@@ -160,7 +161,7 @@ class Agent(object):
                 parent_ind = OPEN.popitem()[0]
             else:
                 break
-            CLOSED.append(parent_ind)
+            # CLOSED.append(parent_ind)
             if parent_ind == target_ind:
                 done = True
                 break
@@ -171,7 +172,7 @@ class Agent(object):
             children_costs = self._get_parent_children_costs(parent_ind)
             for j in range(len(children_inds)):
                 child_ind = children_inds[j]
-                if (not child_ind == -1) and (not child_ind in CLOSED):
+                if (not child_ind == -1): # and (not child_ind in CLOSED):
                     if g[child_ind] > g[parent_ind] + children_costs[j]:
                         g[child_ind] = g[parent_ind] + children_costs[j]
                         pred[child_ind] = parent_ind
@@ -197,11 +198,15 @@ class Agent(object):
         return done
 
     def plan(self) -> bool:
+        consecutive_expand = 0
         while not self.weighted_A_star():
             # if we can't find a path, expand the map and try again
             # this assumes there are other empty spaces outside of current map scope
             if self.expand_map():
-                continue
+                consecutive_expand += 1
+                if consecutive_expand > 1:
+                    print("Planning still failed after expanding.")
+                    return False
             else:
                 return False
         return True
@@ -211,7 +216,6 @@ class Agent(object):
             return self._path
         else:
             return np.array([])
-
 
     def get_path_agent_frame(self) -> np.ndarray:
         if self._path is not None:
@@ -224,12 +228,12 @@ class Agent(object):
         Returns the next action according to the path.
         '''
         next_pos = self._path[self._path_ind+1]
-        return DirectionDict[tuple(next_pos-self.pos)]
+        return Vec2Dir[tuple(next_pos-self.pos)]
 
     def take_next_action(self) -> bool:
         self._path_ind += 1
         next_pos = self._path[self._path_ind]
-        return self.move(DirectionDict[tuple(next_pos-self.pos)])
+        return self.move(Vec2Dir[tuple(next_pos-self.pos)])
 
     def path_valid(self) -> bool:
         '''

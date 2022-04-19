@@ -3,7 +3,7 @@ from enum import IntEnum
 
 class GridStatus(IntEnum):
     EMPTY = 0
-    WALL = 1
+    OBSTACLE = 1
     TARGET = 2
     AGENT = 3
     BOTH = 4
@@ -13,7 +13,7 @@ class ScanStatus(IntEnum):
     OUT_OF_BOUNDS = -2
     OBSTRUCTED = -1
     EMPTY = 0
-    WALL = 1
+    OBSTACLE = 1
     TARGET = 2
     AGENT = 3
     BOTH = 4
@@ -23,13 +23,33 @@ class Direction(IntEnum):
     DOWN = 1
     LEFT = 2
     RIGHT = 3
+    UP_LEFT = 4
+    UP_RIGHT = 5
+    DOWN_LEFT = 6
+    DOWN_RIGHT = 7
 
-DirectionDict = {
+Vec2Dir = {
     (-1,0): Direction.UP,
     (1,0): Direction.DOWN,
     (0,-1): Direction.LEFT,
     (0,1): Direction.RIGHT,
+    (-1,-1): Direction.UP_LEFT,
+    (-1,1): Direction.UP_RIGHT,
+    (1,-1): Direction.DOWN_LEFT,
+    (1,1): Direction.DOWN_RIGHT,
 }
+
+Dir2Vec = {
+    Direction.UP: np.array([-1,0]),
+    Direction.DOWN: np.array([1,0]),
+    Direction.LEFT: np.array([0,-1]),
+    Direction.RIGHT: np.array([0,1]),
+    Direction.UP_LEFT: np.array([-1,-1]),
+    Direction.UP_RIGHT: np.array([-1,1]),
+    Direction.DOWN_LEFT: np.array([1,-1]),
+    Direction.DOWN_RIGHT: np.array([1,1]),
+}
+
 
 class Grid(object):
     '''
@@ -53,17 +73,17 @@ class Grid(object):
     def in_bounds(self,coord) -> bool:
         return coord[0] >= 0 and coord[0] < self._grid.shape[0] and coord[1] >= 0 and coord[1] < self._grid.shape[1]
 
-    def not_wall(self,coord) -> bool:
-        return self._grid[coord[0],coord[1]] != GridStatus.WALL
+    def not_obstacle(self,coord) -> bool:
+        return self._grid[coord[0],coord[1]] != GridStatus.OBSTACLE
 
     def set_obstacle(self, ind_slices) -> None:
-        self._grid[ind_slices] = GridStatus.WALL
+        self._grid[ind_slices] = GridStatus.OBSTACLE
 
     def fill_random_grid(self, probability) -> None:
         sample = np.random.random_sample(self._grid.shape)
-        walls = sample < probability
-        self._grid[walls==True] = GridStatus.WALL
-        self._grid[walls==False] = GridStatus.EMPTY
+        obs = sample < probability
+        self._grid[obs==True] = GridStatus.OBSTACLE
+        self._grid[obs==False] = GridStatus.EMPTY
         # self.place_target(self.target_pos, force=True)
         # self.place_agent(self.agent_pos, force=True)
 
@@ -80,10 +100,10 @@ class Grid(object):
         self.place_agent(self.agent_pos, force=True)
 
     def place_agent(self,pos,force=False) -> bool:
-        # force allows us to override walls
+        # force allows us to override obstacles
         row = pos[0]
         col = pos[1]
-        if self.in_bounds((row,col)) and (force or self.not_wall((row,col))):
+        if self.in_bounds((row,col)) and (force or self.not_obstacle((row,col))):
             if self.agent_pos is not None:
                 self._grid[self.agent_pos[0], self.agent_pos[1]] = GridStatus.PREV_AGENT
             if self._grid[row,col] == GridStatus.TARGET:
@@ -98,7 +118,7 @@ class Grid(object):
     def place_target(self,pos,force=False) -> None:
         row = pos[0]
         col = pos[1]
-        if self.in_bounds((row,col)) and (force or self.not_wall((row,col))):
+        if self.in_bounds((row,col)) and (force or self.not_obstacle((row,col))):
             if self.target_pos is not None:
                 self._grid[self.target_pos[0], self.target_pos[1]] = GridStatus.EMPTY
             if self._grid[row,col] == GridStatus.AGENT:
@@ -111,16 +131,8 @@ class Grid(object):
             return False
 
     def agent_move(self,dir) -> bool:
-        if dir == Direction.RIGHT: # right
-            coord = self.agent_pos + np.array([0,1])
-        elif dir == Direction.DOWN: # down
-            coord = self.agent_pos + np.array([1,0])
-        elif dir == Direction.LEFT: # left
-            coord = self.agent_pos + np.array([0,-1])
-        elif dir == Direction.UP: # up
-            coord = self.agent_pos + np.array([-1,0])
-
-        if self.in_bounds(coord) and self.not_wall(coord):
+        coord = self.agent_pos + np.array(Dir2Vec[dir])
+        if self.in_bounds(coord) and self.not_obstacle(coord):
             return self.place_agent(coord)
         else:
             return False
@@ -134,17 +146,11 @@ class Grid(object):
         for offset in area:
             coord = self.agent_pos + offset
             if not self.in_bounds(coord):
-                result.append((offset, ScanStatus.OUT_OF_BOUNDS))
+                result.append((offset, ScanStatus.OBSTACLE))
             elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
                 result.append((offset, ScanStatus.EMPTY))
             else:
                 result.append((offset, self._grid[coord[0],coord[1]]))
-            # elif self._grid[coord[0],coord[1]] == GridStatus.AGENT:
-            #     result.append((offset, GridStatus.AGENT))
-            # elif self._grid[coord[0],coord[1]] == GridStatus.WALL:
-            #     result.append((offset, ScanStatus.WALL))
-            # elif self._grid[coord[0],coord[1]] == GridStatus.TARGET or self._grid[coord[0],coord[1]] == GridStatus.BOTH:
-            #     result.append((offset, ScanStatus.TARGET))
         return result
 
     def relative_target_pos(self) -> None:

@@ -54,7 +54,11 @@ class Simulation(object):
             self.grid.place_target(target_pos, force=True)
 
     def init_agent(self, init_map_size, max_map_size) -> None:
+        if self.grid is None:
+            print("No grid, can't initialize agent.")
+            sys.exit()
         self.agent = Agent(init_map_size, max_map_size)
+        self.agent.set_target(self.grid.relative_target_pos())
 
     def reset(self) -> None:
         self.grid = None
@@ -79,13 +83,7 @@ class Simulation(object):
             if not self.agent.path_valid():
                 # try to plan a path
                 if not self.agent.plan():
-                    # if we can't find a path, expand the map and try again
-                    # this assumes there are other empty spaces outside of current map scope
-                    if self.agent.expand_map():
-                        continue
-                    else:
-                        print("Reached max map size before finding a valid path.")
-                        break
+                    break
             # try to take next step in path
             if not self.grid.agent_move(self.agent.next_action()):
                 print("Environment does not allow the next action.")
@@ -133,7 +131,7 @@ class Simulation(object):
                     c = self.color_dict["green"]
                 elif cell_status == GridStatus.BOTH:
                     c = self.color_dict["yellow"]
-                elif cell_status == GridStatus.WALL:
+                elif cell_status == GridStatus.OBSTACLE:
                     c = self.color_dict["brown"]
                 else:
                     c = self.color_dict["black"]
@@ -281,8 +279,8 @@ if __name__ == "__main__":
     sim = Simulation(render=True, window_size=(1050, 550), FPS=5, render_offset=Offset(50,0,0,0), center_col_width=50)
     map_size = 20
     sim.init_grid((map_size, map_size))
-    sim.fill_random_grid(probability=0.32, seed=1)
-    sim.init_agent((5,5), (map_size*3, map_size*3))
+    sim.fill_random_grid(probability=0.4, seed=1)
+    sim.init_agent((5,5), (map_size*5, map_size*5))
 
     sim.render_frame()
 
