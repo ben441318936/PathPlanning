@@ -1,10 +1,13 @@
 from collections import namedtuple
+from cv2 import Algorithm
 import numpy as np
 from pqdict import pqdict
 
 from enum import IntEnum
 
 from Grid import Grid, Direction, Vec2Dir, Dir2Vec, GridStatus, ScanStatus
+
+from Algorithms import Weighted_A_star
 
 class MapStatus(IntEnum):
     EMPTY = 0
@@ -19,7 +22,7 @@ class Agent(object):
     '''
     Agent has a map that updates as it explores.
     '''
-    def __init__(self, init_map_size=(5,5)) -> None:
+    def __init__(self, planner=None, init_map_size=(5,5)) -> None:
         self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
         self.pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
         self.init_pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int)
@@ -28,6 +31,10 @@ class Agent(object):
         self.target = None
         self._path = None
         self._path_ind = None
+        if planner is None:
+            self.planner = Weighted_A_star(eps=10)
+        else:
+            self.planner = planner
 
     def size(self) -> tuple:
         return self._map.shape
@@ -123,111 +130,27 @@ class Agent(object):
             self._path += pos_offsets
         return True
 
-    def _get_neighbors_inds(self, parent_ind) -> list:
-        result = []
-        parent_pos = np.unravel_index(parent_ind, self._map.shape)
-        for i in range(-1,2):
-            for j in range(-1,2):
-                pos = parent_pos + np.array([i,j])
-                if (not (i == 0 and j == 0)) and self.in_bounds(pos):
-                    # if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
-                    result.append(np.ravel_multi_index(pos, self._map.shape))
-        return result
-
-    def _get_parent_children_costs(self, parent_ind) -> list:
-        result = []
-        parent_pos = np.unravel_index(parent_ind, self._map.shape)
-        for i in range(-1,2):
-            for j in range(-1,2):
-                pos = parent_pos + np.array([i,j])
-                if (not (i == 0 and j == 0)) and self.in_bounds(pos):
-                    if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
-                        result.append(np.linalg.norm(np.array([i,j])))
-                    else:
-                        result.append(np.inf)
-        return result
-
-    def weighted_A_star(self) -> bool:
-        '''
-        Assume that the current map is correct, plan a path to the target.
-        Using weighted A* with Euclidean distance as heuristic.
-        This heuristic is consistent for all k-connected grid.
-        '''
-        eps = 10
-        # Initialize the data structures
-        # Labels
-        g = np.ones((self._map.shape[0] * self._map.shape[1])) * np.inf
-        start_ind = np.ravel_multi_index(self.pos, self._map.shape)
-        target_ind = np.ravel_multi_index(self.target, self._map.shape)
-        g[start_ind] = 0
-        # Priority queue for OPEN list
-        OPEN = pqdict({})
-        OPEN[start_ind] = g[start_ind] + eps * np.linalg.norm(self.pos - self.target)
-        # A regular dit for CLOSED list
-        # CLOSED = {}
-        # Predecessor list to keep track of path
-        pred = -np.ones((self._map.shape[0] * self._map.shape[1])).astype(int)
-
-        done = False
-
-        while not done:
-            if len(OPEN) != 0 :
-                parent_ind = OPEN.popitem()[0]
-            else:
-                break
-            # CLOSED[parent_ind] = 0
-            if parent_ind == target_ind:
-                done = True
-                break
-            # Get list of children
-            children_inds = self._get_neighbors_inds(parent_ind)
-            # Get list of costs from parent to children
-            # for a 4-connected grid, cost is 1 for all
-            children_costs = self._get_parent_children_costs(parent_ind)
-            for j in range(len(children_inds)):
-                child_ind = children_inds[j]
-                # if (not child_ind == -1) and (not child_ind in CLOSED):
-                if (not child_ind == -1):
-                    if g[child_ind] > g[parent_ind] + children_costs[j]:
-                        g[child_ind] = g[parent_ind] + children_costs[j]
-                        pred[child_ind] = parent_ind
-                        # This updates if child already in OPEN
-                        # and appends to OPEN otherwise
-                        child_pos = np.unravel_index(child_ind, self._map.shape)
-                        OPEN[child_ind] = g[child_ind] + eps * np.linalg.norm(child_pos - self.target)
-
-        # We have found a path
-        path = []
-        if done:
-            ind = target_ind
-            while True:
-                pos = np.unravel_index(ind, self._map.shape)
-                path.append(pos)
-                if ind == start_ind:
-                    break
-                else:
-                    ind = pred[ind]
-        path = list(reversed(path))
-        self._path = np.array(path)
-        self._path_ind = 0
-        return done
-
     def plan(self) -> bool:
         consecutive_expand = 0
-        while not self.weighted_A_star():
-            if np.sum(self._map[0,:]) + np.sum(self._map[-1,:]) + np.sum(self._map[:,0]) + np.sum(self._map[:,-1]) == 0:
-                print("Planning failed, expanding won't help.")
-                return False
-            # if we can't find a path, expand the map and try again
-            # this assumes there are other empty spaces outside of current map scope
-            if consecutive_expand > 0:
-                print("Planning still failed after expanding.")
-                return False
-            if self.expand_map():
-                consecutive_expand += 1
+
+        while True:
+            plan_success, self._path = self.planner.plan(self._map, self.pos, self.target, get_8_neighbors)
+            self._path_ind = 0
+            if not plan_success:
+                if np.sum(self._map[0,:]) + np.sum(self._map[-1,:]) + np.sum(self._map[:,0]) + np.sum(self._map[:,-1]) == 0:
+                    print("Planning failed, expanding won't help.")
+                    return False
+                    # if we can't find a path, expand the map and try again
+                    # this assumes there are other empty spaces outside of current map scope
+                if consecutive_expand > 0:
+                    print("Planning still failed after expanding.")
+                    return False
+                if self.expand_map():
+                    consecutive_expand += 1
+                else:
+                    return False
             else:
-                return False
-        return True
+                return True
 
     def get_path(self) -> np.ndarray:
         if self._path is not None:
@@ -266,4 +189,18 @@ class Agent(object):
                 return False
         return True
 
- 
+### Auxillary
+
+def get_8_neighbors(map, parent) -> tuple:
+    inds = []
+    costs = []
+    for i in range(-1,2):
+        for j in range(-1,2):
+            pos = np.array(parent) + np.array([i,j])
+            if (not (i == 0 and j == 0)) and pos[0] >= 0 and pos[1] >= 0 and pos[0] < map.shape[0] and pos[1] < map.shape[1]:
+                if map[pos[0], pos[1]] != MapStatus.OBSTACLE:
+                    costs.append(np.linalg.norm(np.array([i,j])))
+                else:
+                    costs.append(np.inf)
+                inds.append(tuple(pos))
+    return inds, costs
