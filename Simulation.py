@@ -3,7 +3,7 @@ import numpy as np
 import sys
 
 import pygame
-from Agent import Agent, MapStatus
+from Agent import A_star_agent, MapStatus
 from Grid import Grid, GridStatus
 
 Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
@@ -53,11 +53,11 @@ class Simulation(object):
         else:
             self.grid.place_target(target_pos, force=True)
 
-    def init_agent(self) -> None:
+    def init_agent(self, agent_class) -> None:
         if self.grid is None:
             print("No grid, can't initialize agent.")
             sys.exit()
-        self.agent = Agent()
+        self.agent = agent_class()
         self.agent.set_target(self.grid.relative_target_pos())
 
     def reset(self) -> None:
@@ -166,7 +166,7 @@ class Simulation(object):
                     break
 
     def draw_map(self, map_rect) -> None:
-        map_size = self.agent.size()
+        map_size = self.agent.map_size()
 
         # compute grid cell sizing
         # in pygame, first coordinate is horizontal
@@ -280,7 +280,7 @@ if __name__ == "__main__":
     map_width = map_height = 20
     sim.init_grid((map_height, map_width))
     sim.fill_random_grid(probability=0.4, seed=1)
-    sim.init_agent()
+    sim.init_agent(A_star_agent)
 
     sim.render_frame()
 

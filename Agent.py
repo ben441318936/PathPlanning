@@ -1,5 +1,6 @@
+from abc import ABC, abstractmethod
+
 from collections import namedtuple
-from cv2 import Algorithm
 import numpy as np
 from pqdict import pqdict
 
@@ -18,11 +19,31 @@ class MapStatus(IntEnum):
 
 ExpandWidths = namedtuple("ExpandWidths", ["top", "down", "left", "right"])
 
-class Agent(object):
+NeighborInfo = namedtuple("NeighborInfo", ["coords", "costs"])
+
+### Base agent class ###
+
+class Agent(ABC):
     '''
-    Agent has a map that updates as it explores.
+    Base Agent class.
+    Define a set of common interfaces that the simulation loop should use.
+
+    The following methods are abstract:
+        cone_of_vision
+            Defines the area that the agent can see.
+        plan_algo
+            Defines the planning algorithm used by the agent.
+
+    A few other functions that might be useful to customize:
+        update_map
+            Updates the map according to scan results. 
+            Might need to update other data structures used by the planning algo.
+        expand_map
+            Expands the map when there are no more possible paths.
+            Might need to update other data structures used by the planning algo.
     '''
-    def __init__(self, planner=None, init_map_size=(5,5)) -> None:
+
+    def __init__(self, init_map_size=(5,5)) -> None:
         self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
         self.pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
         self.init_pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int)
@@ -31,12 +52,8 @@ class Agent(object):
         self.target = None
         self._path = None
         self._path_ind = None
-        if planner is None:
-            self.planner = Weighted_A_star(eps=10)
-        else:
-            self.planner = planner
 
-    def size(self) -> tuple:
+    def map_size(self) -> tuple:
         return self._map.shape
 
     def get_cell(self,pos) -> MapStatus:
@@ -52,16 +69,9 @@ class Agent(object):
     def reached_target(self) -> bool:
         return np.sum(np.abs(self.pos - self.target)) == 0
 
+    @abstractmethod
     def cone_of_vision(self) -> list:
-        '''
-        Area that the agent can see.
-        The coordinates of the cells in this area 
-        are returned as list of offsets from the agent.
-        '''
-        # 9x9 area
-        # can be in any order
-        area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2)]
-        return area
+        pass
 
     def move(self, dir) -> bool:
         if self._map[self.pos[0], self.pos[1]] == MapStatus.BOTH:
@@ -98,10 +108,15 @@ class Agent(object):
         Set target position relative to the current agent position.
         After setting, self._map[self.target[0], self.target[1]] should be where the target is
         '''
+        if self.target is not None:
+            self._map[self.target[0], self.target[1]] = MapStatus.EMPTY
         self.target = self.pos + target_pos
         while not self.in_bounds(self.target):
             self.expand_map(self._get_expand_map_widths(self.target))
-        self._map[self.target[0], self.target[1]] = MapStatus.TARGET
+        if self._map[self.target[0], self.target[1]] == MapStatus.AGENT:
+            self._map[self.target[0], self.target[1]] = MapStatus.BOTH
+        else:
+            self._map[self.target[0], self.target[1]] = MapStatus.BOTH
 
     def _get_expand_map_widths(self, pos) -> ExpandWidths:
         widths = [0,0,0,0]
@@ -130,11 +145,29 @@ class Agent(object):
             self._path += pos_offsets
         return True
 
+    def get_neighbors(self, parent) -> NeighborInfo:
+        coords = []
+        costs = []
+        for i in range(-1,2):
+            for j in range(-1,2):
+                pos = np.array(parent) + np.array([i,j])
+                if (not (i == 0 and j == 0)) and pos[0] >= 0 and pos[1] >= 0 and pos[0] < self._map.shape[0] and pos[1] < self._map.shape[1]:
+                    if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
+                        costs.append(np.linalg.norm(np.array([i,j])))
+                    else:
+                        costs.append(np.inf)
+                    coords.append(tuple(pos))
+        return NeighborInfo(coords, costs)
+
+    @abstractmethod
+    def plan_algo(self) -> bool:
+        pass
+
     def plan(self) -> bool:
         consecutive_expand = 0
 
         while True:
-            plan_success, self._path = self.planner.plan(self._map, self.pos, self.target, get_8_neighbors)
+            plan_success = self.plan_algo()
             self._path_ind = 0
             if not plan_success:
                 if np.sum(self._map[0,:]) + np.sum(self._map[-1,:]) + np.sum(self._map[:,0]) + np.sum(self._map[:,-1]) == 0:
@@ -189,18 +222,93 @@ class Agent(object):
                 return False
         return True
 
-### Auxillary
 
-def get_8_neighbors(map, parent) -> tuple:
-    inds = []
-    costs = []
-    for i in range(-1,2):
-        for j in range(-1,2):
-            pos = np.array(parent) + np.array([i,j])
-            if (not (i == 0 and j == 0)) and pos[0] >= 0 and pos[1] >= 0 and pos[0] < map.shape[0] and pos[1] < map.shape[1]:
-                if map[pos[0], pos[1]] != MapStatus.OBSTACLE:
-                    costs.append(np.linalg.norm(np.array([i,j])))
+### Weighted A* agent ###
+
+class A_star_agent(Agent):
+    '''
+    Agent that implements weighted A*.
+    '''
+    def __init__(self, init_map_size=(5, 5), eps=10) -> None:
+        super().__init__(init_map_size)
+        # Also define the weight used in A*
+        self.eps = eps
+
+    def cone_of_vision(self) -> list:
+        return cone_of_vision_8()
+
+    def plan_algo(self) -> bool:
+        '''
+        Assume that the current map is correct, plan a path to the target.
+        Using weighted A* with Euclidean distance as heuristic.
+        This heuristic is consistent for all k-connected grid.
+        '''
+        # Initialize the data structures
+        # Labels
+        g = np.ones(self._map.shape) * np.inf
+        start_ind = tuple(self.pos)
+        goal_ind = tuple(self.target)
+        g[start_ind] = 0
+        # Priority queue for OPEN list
+        OPEN = pqdict({})
+        OPEN[start_ind] = g[start_ind] + self.eps * np.linalg.norm(self.pos - self.target)
+        # Predecessor matrix to keep track of path
+        # # create dtype string
+        # dtype_string = ",".join(['i' for _ in range(len(map.shape))])
+        # pred = np.full(map.shape, -1, dtype=dtype_string)
+        pred = np.full((self._map.shape[0], self._map.shape[1], 2), -1, dtype=int)
+
+        done = False
+
+        while not done:
+            if len(OPEN) != 0 :
+                parent_ind = OPEN.popitem()[0]
+            else:
+                break
+            if parent_ind[0] == goal_ind[0] and parent_ind[1] == goal_ind[1]:
+                done = True
+                break
+            # get neighbors
+            children_inds, children_costs = self.get_neighbors(parent_ind)
+            # # Get list of children
+            # children_inds = self._get_neighbors_inds(parent_ind)
+            # # Get list of costs from parent to children
+            # children_costs = self._get_parent_children_costs(parent_ind)
+            for child_ind, child_cost in zip(children_inds, children_costs):
+                if g[child_ind] > g[parent_ind] + child_cost:
+                    g[child_ind] = g[parent_ind] + child_cost
+                    pred[child_ind[0], child_ind[1], :] = np.array(parent_ind)
+                    # This updates if child already in OPEN
+                    # and appends to OPEN otherwise
+                    OPEN[child_ind] = g[child_ind] + self.eps * np.linalg.norm(np.array(child_ind) - self.target)
+
+        # We have found a path
+        path = []
+        if done:
+            pos = self.target
+            while True:
+                path.append(pos)
+                if pos[0] == self.pos[0] and pos[1] == self.pos[1]:
+                    break
                 else:
-                    costs.append(np.inf)
-                inds.append(tuple(pos))
-    return inds, costs
+                    pos = pred[pos[0], pos[1], :]
+        path = list(reversed(path))
+        self._path = np.array(path)
+        return done
+    
+
+
+
+
+### Cone of vision functions ###
+
+def cone_of_vision_8() -> list:
+    '''
+    Area that the agent can see.
+    The coordinates of the cells in this area 
+    are returned as list of offsets from the agent.
+    '''
+    # 9x9 area
+    # can be in any order
+    area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2)]
+    return area
