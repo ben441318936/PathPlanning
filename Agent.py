@@ -65,6 +65,7 @@ class Agent(ABC):
         self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
         self.max_map_size = max_map_size
         self.target = None
+        self.steps_taken = 0
         self._path = None
         self._path_ind = 0
 
@@ -103,6 +104,7 @@ class Agent(ABC):
             self._map[self.pos[0], self.pos[1]] = MapStatus.BOTH
         else:
             self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
+        self.steps_taken += 1
         return True
 
     def update_map(self, scan_result) -> None:
@@ -259,7 +261,7 @@ class A_star_agent(Agent):
     '''
     Agent that implements weighted A*.
     '''
-    def __init__(self, init_map_size=(5, 5), max_map_size=None, eps=10) -> None:
+    def __init__(self, init_map_size=(40, 40), max_map_size=None, eps=1) -> None:
         super().__init__(init_map_size, max_map_size)
         # Also define the weight used in A*
         self.eps = eps
@@ -335,11 +337,10 @@ class D_star_agent(Agent):
     '''
     Agent that implements D* Lite.
     '''
-    def __init__(self, init_map_size=(40, 40), max_map_size=(40,40), eps=10) -> None:
+    def __init__(self, init_map_size=(40, 40), max_map_size=(10,10)) -> None:
         super().__init__(init_map_size, max_map_size)
-        # Also define the weight used in heuristic search
-        self.eps = eps
         self._init_search_structs()
+        self._last_map_change_pos = self.pos
 
     def cone_of_vision(self) -> list:
         return cone_of_vision_8()
@@ -350,7 +351,7 @@ class D_star_agent(Agent):
         self._U[tuple(self.target)] = (self._heuristic(self.pos, self.target), 0)
 
     def _heuristic(self, s1: np.ndarray, s2: np.ndarray) -> float:
-        return self.eps * np.linalg.norm(s1 - s2)
+        return np.linalg.norm(s1 - s2)
 
     def _init_search_structs(self) -> None:
         self._U = pqdict({})
@@ -365,22 +366,23 @@ class D_star_agent(Agent):
     
     def _update_vertex(self, u: tuple) -> None:
         if self._g[u] != self._rhs[u]:
+            # updates if already in U
+            # inserts if not
             self._U[u] = self._calculate_key(u)
-            print("in update vertex:", u, self._U[u])
-        else:
-            if u in self._U:
-                del self._U[u]
+            # print("in update vertex:", u, self._U[u])
+        elif self._g[u] == self._rhs[u] and u in self._U:
+            del self._U[u]
 
     def _compute_shortest_path(self) -> None:
-        print("Started search from", tuple(self.pos), "to", tuple(self.target))
+        # print("Started search from", tuple(self.pos), "to", tuple(self.target))
         k = 0
-        while k < 100 and self._U.topitem()[1] < self._calculate_key(tuple(self.pos)) or self._rhs[tuple(self.pos)] > self._g[tuple(self.pos)]:
+        while len(self._U) != 0 and (self._U.topitem()[1] < self._calculate_key(tuple(self.pos)) or self._rhs[tuple(self.pos)] > self._g[tuple(self.pos)]):
             k += 1
             u = self._U.topitem()[0]
             key_old = self._U.topitem()[1]
             key_new = self._calculate_key(u)
 
-            print("At iter", k, u, key_old, key_new, self._g[u], self._rhs[u])
+            # print("At iter", k, u, key_old, key_new, self._g[u], self._rhs[u])
 
             if key_old < key_new:
                 self._U[u] = key_new
@@ -400,19 +402,27 @@ class D_star_agent(Agent):
                 for s in vertices:
                     if self._rhs[s.coord] == s.cost + g_old:
                         if s.coord != tuple(self.target):
-                            self._rhs[s.coord] = min([v.cost for v in self.get_neighbors(s.coord)])
+                            self._rhs[s.coord] = min([v.cost + self._g[v.coord] for v in self.get_neighbors(s.coord)])
                     self._update_vertex(s.coord)
 
     def plan_algo(self) -> bool:
         self._compute_shortest_path()
+        # print(self._g)
+        # print(self._rhs)
         if self._rhs[tuple(self.pos)] == np.inf:
             # could not find a path
             self._path = np.array([])
             return False
         else:
+            incomplete_path = False
+            count = 0
             path = []
             pos = self.pos
             while True:
+                count += 1
+                if count > self._map.shape[0] * self._map.shape[1]:
+                    incomplete_path = True
+                    break
                 path.append(pos)
                 if pos[0] == self.target[0] and pos[1] == self.target[1]:
                     break
@@ -421,15 +431,28 @@ class D_star_agent(Agent):
                     pos = neighbors[0].coord
                     min_cost = neighbors[0].cost + self._g[neighbors[0].coord]
                     for node in neighbors:
-                        if node.cost + self._g[node.coord] < min_cost:
+                        if node.cost + self._g[node.coord] <= min_cost:
                             min_cost = node.cost + self._g[node.coord]
                             pos = node.coord
                     pos = np.array(pos)
+
+            if incomplete_path:
+                neighbors = self.get_neighbors(tuple(self.pos))
+                pos = neighbors[0].coord
+                min_cost = neighbors[0].cost + self._g[neighbors[0].coord]
+                for node in neighbors:
+                    if node.cost + self._g[node.coord] <= min_cost:
+                        min_cost = node.cost + self._g[node.coord]
+                        pos = node.coord
+                pos = np.array(pos)
+                path = [self.pos, pos]
+
             self._path = np.array(path)
             return True
 
     def update_map(self, scan_result) -> None:
-        print("Updating map")
+        # print("Updating map")
+        map_changed = False
         for res in scan_result:
             v = self.pos + res[0]
             while not self.in_bounds(v):
@@ -438,9 +461,16 @@ class D_star_agent(Agent):
             if res[1] == ScanStatus.OBSTACLE:
                 if self._map[tuple(v)] != MapStatus.OBSTACLE:
                     # discovered an obstacle we didn't know about
-                    if self._path_ind > 0:
-                        self._k_m += self._heuristic(self.pos, self._path[self._path_ind-1])
-                    # the status of v changed, so we need to change estimates for edges going from u to v
+                    if not map_changed:
+                        self._k_m += self._heuristic(self.pos, self._last_map_change_pos)
+                        self._last_map_change_pos = self.pos
+                        map_changed = True
+                    # the status of v changed
+                    # first change the estimates for edges going from v to its neighbors
+                    # we only need to change rhs here, since the costs are computed dynamically
+                    # setting the map status will correct future estimates
+                    self._rhs[tuple(v)] = np.inf
+                    # then change estimates for edges going from u to v
                     # u being the neighbors of v
                     u_s = self.get_neighbors(tuple(v))
                     c_olds = [self.get_cost_between_vertices(u.coord, tuple(v)) for u in u_s]
@@ -461,12 +491,15 @@ class D_star_agent(Agent):
                 self._map[tuple(v)] = MapStatus.TARGET
             elif res[1] == ScanStatus.EMPTY:
                 self._map[tuple(v)] = MapStatus.EMPTY
+
+    def path_valid(self) -> bool:
+        # modified to check if there is still a next action to take
+        # because D* does incremental search
+        # the next best action might be based on wrong estimates that need to be corrected
+        # so it won't lead to the target
+        return super().path_valid() and self._path_ind+1 < self._path.shape[0]
+
             
-    # def path_valid(self) -> bool:
-    #     valid = super().path_valid()
-    #     if not valid:
-    #         self._g[tuple(self.pos)] = np.inf
-    #         self_
 
 
 

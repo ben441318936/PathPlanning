@@ -1,6 +1,9 @@
 from collections import namedtuple
 import numpy as np
+np.set_printoptions(precision=2)
 import sys
+
+from time import time
 
 import pygame
 from Agent import A_star_agent, D_star_agent, MapStatus
@@ -279,27 +282,31 @@ class Simulation(object):
 
 
 if __name__ == "__main__":
-    sim = Simulation(render=True, window_size=(1050, 550), FPS=60, render_offset=Offset(50,0,0,0), center_col_width=50)
+    sim = Simulation(render=False, window_size=(1050, 550), FPS=60, render_offset=Offset(50,0,0,0), center_col_width=50)
     map_width = map_height = 20
     sim.init_grid((map_height, map_width))
     sim.fill_random_grid(probability=0.4, seed=1)
     sim.init_agent(D_star_agent)
 
-    sim.render_frame()
+    # sim.render_frame()
 
-    started = False
-    while not started:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT: 
-                sys.exit()
-            if event.type == pygame.MOUSEBUTTONDOWN: 
-                started = True
+    # started = False
+    # while not started:
+    #     for event in pygame.event.get():
+    #         if event.type == pygame.QUIT: 
+    #             sys.exit()
+    #         if event.type == pygame.MOUSEBUTTONDOWN: 
+    #             started = True
 
+    t = time()
     sim.run_sim()
+    print("sim took:", time() - t)
 
-    sim.render_frame()
+    # sim.render_frame()
 
-    while True:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT: 
-                sys.exit()
+    print("Steps taken:", sim.agent.steps_taken)
+
+    # while True:
+    #     for event in pygame.event.get():
+    #         if event.type == pygame.QUIT: 
+    #             sys.exit()
