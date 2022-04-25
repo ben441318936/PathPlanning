@@ -66,7 +66,7 @@ class Agent(ABC):
         self.max_map_size = max_map_size
         self.target = None
         self._path = None
-        self._path_ind = None
+        self._path_ind = 0
 
     def map_size(self) -> tuple:
         return self._map.shape
@@ -169,13 +169,25 @@ class Agent(ABC):
             for j in range(-1,2):
                 pos = np.array(vertex) + np.array([i,j])
                 if (not (i == 0 and j == 0)) and pos[0] >= 0 and pos[1] >= 0 and pos[0] < self._map.shape[0] and pos[1] < self._map.shape[1]:
-                    if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
+                    if self._map[vertex] != MapStatus.OBSTACLE and self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
                         cost = np.linalg.norm(np.array([i,j]))
                     else:
                         cost = np.inf
                     coord = tuple(pos)
                     infos.append(VertexInfo(coord, cost))
         return infos
+
+    def get_cost_between_vertices(self, v1: tuple, v2: tuple) -> float:
+        if self._map[v1] == MapStatus.OBSTACLE or self._map[v2] == MapStatus.OBSTACLE:
+            return np.inf
+        else:
+            v1 = np.array(v1)
+            v2 = np.array(v2)
+            dif = np.abs(v1 - v2)
+            if dif[0] > 1 or dif[1] > 1:
+                return np.inf
+            else:
+                return np.linalg.norm(dif)
 
     @abstractmethod
     def plan_algo(self) -> bool:
@@ -354,25 +366,32 @@ class D_star_agent(Agent):
     def _update_vertex(self, u: tuple) -> None:
         if self._g[u] != self._rhs[u]:
             self._U[u] = self._calculate_key(u)
+            print("in update vertex:", u, self._U[u])
         else:
             if u in self._U:
                 del self._U[u]
 
     def _compute_shortest_path(self) -> None:
-        while self._U.topitem()[1] < self._calculate_key(tuple(self.pos)) or self._rhs[tuple(self.pos)] > self._g[tuple(self.pos)]:
+        print("Started search from", tuple(self.pos), "to", tuple(self.target))
+        k = 0
+        while k < 100 and self._U.topitem()[1] < self._calculate_key(tuple(self.pos)) or self._rhs[tuple(self.pos)] > self._g[tuple(self.pos)]:
+            k += 1
             u = self._U.topitem()[0]
             key_old = self._U.topitem()[1]
             key_new = self._calculate_key(u)
+
+            print("At iter", k, u, key_old, key_new, self._g[u], self._rhs[u])
+
             if key_old < key_new:
                 self._U[u] = key_new
             elif self._g[u] > self._rhs[u]:
                 self._g[u] = self._rhs[u]
                 u = self._U.popitem()[0]
-                neighbors = self.get_neighbors(u)
-                for node in neighbors:
-                    if node.coord != tuple(self.target):
-                        self._rhs[node.coord] = min(self._rhs[node.coord], node.cost + self._g[u])
-                    self._update_vertex(node.coord)
+                vertices = self.get_neighbors(u)
+                for s in vertices:
+                    if s.coord != tuple(self.target):
+                        self._rhs[s.coord] = min(self._rhs[s.coord], s.cost + self._g[u])
+                    self._update_vertex(s.coord)
             else:
                 g_old = self._g[u]
                 self._g[u] = np.inf
@@ -381,8 +400,7 @@ class D_star_agent(Agent):
                 for s in vertices:
                     if self._rhs[s.coord] == s.cost + g_old:
                         if s.coord != tuple(self.target):
-                            succ_costs = [v.cost for v in self.get_neighbors(s.coord)]
-                            self._rhs[s.coord] = min(succ_costs)
+                            self._rhs[s.coord] = min([v.cost for v in self.get_neighbors(s.coord)])
                     self._update_vertex(s.coord)
 
     def plan_algo(self) -> bool:
@@ -407,36 +425,48 @@ class D_star_agent(Agent):
                             min_cost = node.cost + self._g[node.coord]
                             pos = node.coord
                     pos = np.array(pos)
-                self._path = np.array(path)
+            self._path = np.array(path)
             return True
 
     def update_map(self, scan_result) -> None:
+        print("Updating map")
         for res in scan_result:
-            coord = self.pos + res[0]
-            while not self.in_bounds(coord):
-                self.expand_map(self._get_expand_map_widths(coord))
-                coord = self.pos + res[0]
+            v = self.pos + res[0]
+            while not self.in_bounds(v):
+                self.expand_map(self._get_expand_map_widths(v))
+                v = self.pos + res[0]
             if res[1] == ScanStatus.OBSTACLE:
-                if self._map[coord[0],coord[1]] != MapStatus.OBSTACLE:
+                if self._map[tuple(v)] != MapStatus.OBSTACLE:
                     # discovered an obstacle we didn't know about
-                    self._k_m += self._heuristic(self.pos, self._path[self._path_ind-1])
-                    u_s_old = self.get_neighbors(tuple(coord))
-                    self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
-                    u_s = self.get_neighbors(tuple(coord))
-                    for u_old, u in zip(u_s_old, u_s):
+                    if self._path_ind > 0:
+                        self._k_m += self._heuristic(self.pos, self._path[self._path_ind-1])
+                    # the status of v changed, so we need to change estimates for edges going from u to v
+                    # u being the neighbors of v
+                    u_s = self.get_neighbors(tuple(v))
+                    c_olds = [self.get_cost_between_vertices(u.coord, tuple(v)) for u in u_s]
+                    self._map[tuple(v)] = MapStatus.OBSTACLE
+                    for u, c_old in zip(u_s, c_olds):
                         if u.coord != tuple(self.target):
-                            if u_old.cost > u.cost:
-                                self._rhs[u.coord] = min(self._rhs[u.coord], u.cost + self._g[tuple(coord)])
-                            elif self._rhs[u.coord] == u_old.cost + self._g[tuple(coord)]:
-                                self._rhs[u.coord] = min([v.cost + self._g[v.coord] for v in self.get_neighbors(u.coord)])
+                            c_new = self.get_cost_between_vertices(u.coord, tuple(v))
+                            if c_old > c_new:
+                                # edge cost decreaed, won't happen in current sim assumptions
+                                self._rhs[u.coord] = min(self._rhs[u.coord], c_new + self._g[tuple(v)])
+                            elif self._rhs[u.coord] == c_old + self._g[tuple(v)]:
+                                # we used v to reach u, since v changed, we need to adjust our estimates
+                                self._rhs[u.coord] = min([z.cost + self._g[z.coord] for z in self.get_neighbors(u.coord)])
                         self._update_vertex(u.coord)
                 else:
-                    self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
+                    self._map[tuple(v)] = MapStatus.OBSTACLE
             elif res[1] == ScanStatus.TARGET:
-                self._map[coord[0],coord[1]] = MapStatus.TARGET
+                self._map[tuple(v)] = MapStatus.TARGET
             elif res[1] == ScanStatus.EMPTY:
-                self._map[coord[0],coord[1]] = MapStatus.EMPTY
+                self._map[tuple(v)] = MapStatus.EMPTY
             
+    # def path_valid(self) -> bool:
+    #     valid = super().path_valid()
+    #     if not valid:
+    #         self._g[tuple(self.pos)] = np.inf
+    #         self_
 
 
 

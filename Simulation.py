@@ -68,8 +68,8 @@ class Simulation(object):
         if self.render:
             self.render_frame()
 
-        # # do an initial scan
-        # self.agent.update_map(self.grid.scan(self.agent.cone_of_vision()))
+        # do an initial scan
+        self.agent.update_map(self.grid.scan(self.agent.cone_of_vision()))
 
         finished = self.grid.agent_reached_target()
         # search loop
