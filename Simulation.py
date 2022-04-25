@@ -3,7 +3,7 @@ import numpy as np
 import sys
 
 import pygame
-from Agent import A_star_agent, MapStatus
+from Agent import A_star_agent, D_star_agent, MapStatus
 from Grid import Grid, GridStatus
 
 Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
@@ -68,9 +68,8 @@ class Simulation(object):
         if self.render:
             self.render_frame()
 
-        self.agent.set_target(self.grid.relative_target_pos())
-        # do an initial scan
-        self.agent.update_map(self.grid.scan(self.agent.cone_of_vision()))
+        # # do an initial scan
+        # self.agent.update_map(self.grid.scan(self.agent.cone_of_vision()))
 
         finished = self.grid.agent_reached_target()
         # search loop
@@ -83,6 +82,7 @@ class Simulation(object):
             if not self.agent.path_valid():
                 # try to plan a path
                 if not self.agent.plan():
+                    print("Planning failed.")
                     break
             # try to take next step in path
             if not self.grid.agent_move(self.agent.next_action()):
@@ -224,6 +224,9 @@ class Simulation(object):
                     break
 
     def render_frame(self) -> None:
+        if not self.render:
+            return
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT: sys.exit()
 
@@ -280,7 +283,7 @@ if __name__ == "__main__":
     map_width = map_height = 20
     sim.init_grid((map_height, map_width))
     sim.fill_random_grid(probability=0.4, seed=1)
-    sim.init_agent(A_star_agent)
+    sim.init_agent(D_star_agent)
 
     sim.render_frame()
 

@@ -6,6 +6,8 @@ from pqdict import pqdict
 
 from enum import IntEnum
 
+from sklearn import neighbors
+
 from Grid import Grid, Direction, Vec2Dir, Dir2Vec, GridStatus, ScanStatus
 
 from Algorithms import Weighted_A_star
@@ -19,7 +21,20 @@ class MapStatus(IntEnum):
 
 ExpandWidths = namedtuple("ExpandWidths", ["top", "down", "left", "right"])
 
-NeighborInfo = namedtuple("NeighborInfo", ["coords", "costs"])
+VertexInfo = namedtuple("VertexInfo", ["coord", "cost"])
+
+### Cone of vision functions ###
+
+def cone_of_vision_8() -> list:
+    '''
+    Area that the agent can see.
+    The coordinates of the cells in this area 
+    are returned as list of offsets from the agent.
+    '''
+    # 9x9 area
+    # can be in any order
+    area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2)]
+    return area
 
 ### Base agent class ###
 
@@ -43,12 +58,12 @@ class Agent(ABC):
             Might need to update other data structures used by the planning algo.
     '''
 
-    def __init__(self, init_map_size=(5,5)) -> None:
+    def __init__(self, init_map_size=(5,5), max_map_size=None) -> None:
         self._map = np.zeros((init_map_size), dtype=int) # assume everything empty
         self.pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int) # agent initializes to center of map
         self.init_pos = np.array([init_map_size[0]//2, init_map_size[1]//2], dtype=int)
         self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
-        # self._max_map_size = max_map_size
+        self.max_map_size = max_map_size
         self.target = None
         self._path = None
         self._path_ind = None
@@ -136,28 +151,31 @@ class Agent(ABC):
         Used when the current map is too small.
         wdiths (UP, DOWN, LEFT, RIGHT)
         '''
-        self._map = np.pad(self._map, ((widths.top, widths.down), (widths.left, widths.right)), constant_values=MapStatus.EMPTY)
-        pos_offsets = np.array([widths.top, widths.left])
-        self.pos = self.pos + pos_offsets
-        self.init_pos = self.init_pos + pos_offsets
-        self.target = self.target + pos_offsets
-        if self._path is not None and self._path.shape[0] != 0:
-            self._path += pos_offsets
-        return True
+        if self.max_map_size is None or (self._map.shape[0] < self.max_map_size[0] and self._map.shape[1] < self.max_map_size[1]):
+            self._map = np.pad(self._map, ((widths.top, widths.down), (widths.left, widths.right)), constant_values=MapStatus.EMPTY)
+            pos_offsets = np.array([widths.top, widths.left])
+            self.pos = self.pos + pos_offsets
+            self.init_pos = self.init_pos + pos_offsets
+            self.target = self.target + pos_offsets
+            if self._path is not None and self._path.shape[0] != 0:
+                self._path += pos_offsets
+            return True
+        else:
+            return False
 
-    def get_neighbors(self, parent) -> NeighborInfo:
-        coords = []
-        costs = []
+    def get_neighbors(self, vertex: tuple) -> list:
+        infos = []
         for i in range(-1,2):
             for j in range(-1,2):
-                pos = np.array(parent) + np.array([i,j])
+                pos = np.array(vertex) + np.array([i,j])
                 if (not (i == 0 and j == 0)) and pos[0] >= 0 and pos[1] >= 0 and pos[0] < self._map.shape[0] and pos[1] < self._map.shape[1]:
                     if self._map[pos[0], pos[1]] != MapStatus.OBSTACLE:
-                        costs.append(np.linalg.norm(np.array([i,j])))
+                        cost = np.linalg.norm(np.array([i,j]))
                     else:
-                        costs.append(np.inf)
-                    coords.append(tuple(pos))
-        return NeighborInfo(coords, costs)
+                        cost = np.inf
+                    coord = tuple(pos)
+                    infos.append(VertexInfo(coord, cost))
+        return infos
 
     @abstractmethod
     def plan_algo(self) -> bool:
@@ -229,8 +247,8 @@ class A_star_agent(Agent):
     '''
     Agent that implements weighted A*.
     '''
-    def __init__(self, init_map_size=(5, 5), eps=10) -> None:
-        super().__init__(init_map_size)
+    def __init__(self, init_map_size=(5, 5), max_map_size=None, eps=10) -> None:
+        super().__init__(init_map_size, max_map_size)
         # Also define the weight used in A*
         self.eps = eps
 
@@ -269,12 +287,14 @@ class A_star_agent(Agent):
                 done = True
                 break
             # get neighbors
-            children_inds, children_costs = self.get_neighbors(parent_ind)
+            infos = self.get_neighbors(parent_ind)
             # # Get list of children
             # children_inds = self._get_neighbors_inds(parent_ind)
             # # Get list of costs from parent to children
             # children_costs = self._get_parent_children_costs(parent_ind)
-            for child_ind, child_cost in zip(children_inds, children_costs):
+            for child in infos:
+                child_ind = child.coord
+                child_cost = child.cost
                 if g[child_ind] > g[parent_ind] + child_cost:
                     g[child_ind] = g[parent_ind] + child_cost
                     pred[child_ind[0], child_ind[1], :] = np.array(parent_ind)
@@ -297,18 +317,126 @@ class A_star_agent(Agent):
         return done
     
 
+### D* Agent ### 
 
-
-
-### Cone of vision functions ###
-
-def cone_of_vision_8() -> list:
+class D_star_agent(Agent):
     '''
-    Area that the agent can see.
-    The coordinates of the cells in this area 
-    are returned as list of offsets from the agent.
+    Agent that implements D* Lite.
     '''
-    # 9x9 area
-    # can be in any order
-    area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2)]
-    return area
+    def __init__(self, init_map_size=(40, 40), max_map_size=(40,40), eps=10) -> None:
+        super().__init__(init_map_size, max_map_size)
+        # Also define the weight used in heuristic search
+        self.eps = eps
+        self._init_search_structs()
+
+    def cone_of_vision(self) -> list:
+        return cone_of_vision_8()
+
+    def set_target(self, target_pos) -> None:
+        super().set_target(target_pos)
+        self._rhs[tuple(self.target)] = 0
+        self._U[tuple(self.target)] = (self._heuristic(self.pos, self.target), 0)
+
+    def _heuristic(self, s1: np.ndarray, s2: np.ndarray) -> float:
+        return self.eps * np.linalg.norm(s1 - s2)
+
+    def _init_search_structs(self) -> None:
+        self._U = pqdict({})
+        self._k_m = 0
+        self._g = np.ones(self._map.shape) * np.inf
+        self._rhs = np.ones(self._map.shape) * np.inf
+        # self._rhs[tuple(self.target)] = 0
+        # self._U[tuple(self.target)] = (self._heuristic(self.pos, self.target), 0)
+
+    def _calculate_key(self, s: tuple) -> tuple:
+        return (min(self._g[s], self._rhs[s]) + self._heuristic(self.pos, np.array(s)) + self._k_m, min(self._g[s], self._rhs[s]))
+    
+    def _update_vertex(self, u: tuple) -> None:
+        if self._g[u] != self._rhs[u]:
+            self._U[u] = self._calculate_key(u)
+        else:
+            if u in self._U:
+                del self._U[u]
+
+    def _compute_shortest_path(self) -> None:
+        while self._U.topitem()[1] < self._calculate_key(tuple(self.pos)) or self._rhs[tuple(self.pos)] > self._g[tuple(self.pos)]:
+            u = self._U.topitem()[0]
+            key_old = self._U.topitem()[1]
+            key_new = self._calculate_key(u)
+            if key_old < key_new:
+                self._U[u] = key_new
+            elif self._g[u] > self._rhs[u]:
+                self._g[u] = self._rhs[u]
+                u = self._U.popitem()[0]
+                neighbors = self.get_neighbors(u)
+                for node in neighbors:
+                    if node.coord != tuple(self.target):
+                        self._rhs[node.coord] = min(self._rhs[node.coord], node.cost + self._g[u])
+                    self._update_vertex(node.coord)
+            else:
+                g_old = self._g[u]
+                self._g[u] = np.inf
+                vertices = self.get_neighbors(u)
+                vertices.append(VertexInfo(u,0))
+                for s in vertices:
+                    if self._rhs[s.coord] == s.cost + g_old:
+                        if s.coord != tuple(self.target):
+                            succ_costs = [v.cost for v in self.get_neighbors(s.coord)]
+                            self._rhs[s.coord] = min(succ_costs)
+                    self._update_vertex(s.coord)
+
+    def plan_algo(self) -> bool:
+        self._compute_shortest_path()
+        if self._rhs[tuple(self.pos)] == np.inf:
+            # could not find a path
+            self._path = np.array([])
+            return False
+        else:
+            path = []
+            pos = self.pos
+            while True:
+                path.append(pos)
+                if pos[0] == self.target[0] and pos[1] == self.target[1]:
+                    break
+                else:
+                    neighbors = self.get_neighbors(tuple(pos))
+                    pos = neighbors[0].coord
+                    min_cost = neighbors[0].cost + self._g[neighbors[0].coord]
+                    for node in neighbors:
+                        if node.cost + self._g[node.coord] < min_cost:
+                            min_cost = node.cost + self._g[node.coord]
+                            pos = node.coord
+                    pos = np.array(pos)
+                self._path = np.array(path)
+            return True
+
+    def update_map(self, scan_result) -> None:
+        for res in scan_result:
+            coord = self.pos + res[0]
+            while not self.in_bounds(coord):
+                self.expand_map(self._get_expand_map_widths(coord))
+                coord = self.pos + res[0]
+            if res[1] == ScanStatus.OBSTACLE:
+                if self._map[coord[0],coord[1]] != MapStatus.OBSTACLE:
+                    # discovered an obstacle we didn't know about
+                    self._k_m += self._heuristic(self.pos, self._path[self._path_ind-1])
+                    u_s_old = self.get_neighbors(tuple(coord))
+                    self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
+                    u_s = self.get_neighbors(tuple(coord))
+                    for u_old, u in zip(u_s_old, u_s):
+                        if u.coord != tuple(self.target):
+                            if u_old.cost > u.cost:
+                                self._rhs[u.coord] = min(self._rhs[u.coord], u.cost + self._g[tuple(coord)])
+                            elif self._rhs[u.coord] == u_old.cost + self._g[tuple(coord)]:
+                                self._rhs[u.coord] = min([v.cost + self._g[v.coord] for v in self.get_neighbors(u.coord)])
+                        self._update_vertex(u.coord)
+                else:
+                    self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
+            elif res[1] == ScanStatus.TARGET:
+                self._map[coord[0],coord[1]] = MapStatus.TARGET
+            elif res[1] == ScanStatus.EMPTY:
+                self._map[coord[0],coord[1]] = MapStatus.EMPTY
+            
+
+
+
