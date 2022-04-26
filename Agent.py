@@ -6,11 +6,8 @@ from pqdict import pqdict
 
 from enum import IntEnum
 
-from sklearn import neighbors
+from Grid import Vec2Dir, Dir2Vec, ScanStatus
 
-from Grid import Grid, Direction, Vec2Dir, Dir2Vec, GridStatus, ScanStatus
-
-from Algorithms import Weighted_A_star
 
 class MapStatus(IntEnum):
     EMPTY = 0
