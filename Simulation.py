@@ -67,9 +67,17 @@ class Simulation(object):
         self.grid = None
         self.agent = None
 
-    def run_sim(self) -> None:
+    def run_sim(self, manual=False) -> None:
         if self.render:
             self.render_frame()
+            if manual:
+                started = False
+                while not started:
+                    for event in pygame.event.get():
+                        if event.type == pygame.QUIT: 
+                            sys.exit()
+                        if event.type == pygame.MOUSEBUTTONDOWN: 
+                            started = True
 
         # do an initial scan
         self.agent.update_map(self.grid.scan(self.agent.cone_of_vision()))
@@ -103,6 +111,14 @@ class Simulation(object):
             # render
             if self.render:
                 self.render_frame()
+                if manual:
+                    started = False
+                    while not started:
+                        for event in pygame.event.get():
+                            if event.type == pygame.QUIT: 
+                                sys.exit()
+                            if event.type == pygame.MOUSEBUTTONDOWN: 
+                                started = True
 
         if not finished:
             print("Sim loop exited without agent reaching target.")
@@ -282,31 +298,34 @@ class Simulation(object):
 
 
 if __name__ == "__main__":
-    sim = Simulation(render=False, window_size=(1050, 550), FPS=60, render_offset=Offset(50,0,0,0), center_col_width=50)
+    sim = Simulation(render=True, window_size=(1050, 550), FPS=60, render_offset=Offset(50,0,0,0), center_col_width=50)
     map_width = map_height = 20
     sim.init_grid((map_height, map_width))
     sim.fill_random_grid(probability=0.4, seed=1)
-    sim.init_agent(D_star_agent)
+    sim.init_agent(A_star_agent)
 
-    # sim.render_frame()
+    sim.render_frame()
 
-    # started = False
-    # while not started:
-    #     for event in pygame.event.get():
-    #         if event.type == pygame.QUIT: 
-    #             sys.exit()
-    #         if event.type == pygame.MOUSEBUTTONDOWN: 
-    #             started = True
+    started = False
+    while not started:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT: 
+                sys.exit()
+            if event.type == pygame.MOUSEBUTTONDOWN: 
+                started = True
 
     t = time()
-    sim.run_sim()
+    sim.run_sim(manual=False)
     print("sim took:", time() - t)
 
-    # sim.render_frame()
+    sim.render_frame()
 
     print("Steps taken:", sim.agent.steps_taken)
+    print("Distance travelled:", sim.agent.distance_travelled)
+    print("Num expanded nodes:", sim.agent.num_expanded_nodes)
+    print("Max queue size:", sim.agent.max_queue_size)
 
-    # while True:
-    #     for event in pygame.event.get():
-    #         if event.type == pygame.QUIT: 
-    #             sys.exit()
+    while True:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT: 
+                sys.exit()

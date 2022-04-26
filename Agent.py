@@ -66,6 +66,7 @@ class Agent(ABC):
         self.max_map_size = max_map_size
         self.target = None
         self.steps_taken = 0
+        self.distance_travelled = 0
         self._path = None
         self._path_ind = 0
 
@@ -104,13 +105,15 @@ class Agent(ABC):
             self._map[self.pos[0], self.pos[1]] = MapStatus.BOTH
         else:
             self._map[self.pos[0], self.pos[1]] = MapStatus.AGENT
+
         self.steps_taken += 1
+        self.distance_travelled += np.linalg.norm(Dir2Vec[dir])
         return True
 
     def update_map(self, scan_result) -> None:
         for res in scan_result:
             coord = self.pos + res[0]
-            while not self.in_bounds(coord):
+            if not self.in_bounds(coord) or coord[0] == 0 or coord[0] == self._map.shape[0]-1 or coord[1] == 0 or coord[1] == self._map.shape[1]-1:
                 self.expand_map(self._get_expand_map_widths(coord))
                 coord = self.pos + res[0]
             if res[1] == ScanStatus.OBSTACLE:
@@ -135,7 +138,7 @@ class Agent(ABC):
         else:
             self._map[self.target[0], self.target[1]] = MapStatus.BOTH
 
-    def _get_expand_map_widths(self, pos) -> ExpandWidths:
+    def _get_expand_map_widths(self, pos, base_width=(5,5,5,5)) -> ExpandWidths:
         widths = [0,0,0,0]
         if pos[0] < 0:
             widths[0] = -pos[0]
@@ -145,7 +148,7 @@ class Agent(ABC):
             widths[2] = -pos[1]
         elif pos[1] >= self._map.shape[1]:
             widths[3] = pos[1] - self._map.shape[1] + 1
-        widths = ExpandWidths(widths[0], widths[1], widths[2], widths[3])
+        widths = ExpandWidths(widths[0]+base_width[0], widths[1]+base_width[1], widths[2]+base_width[1], widths[3]+base_width[3])
         return widths
 
     def expand_map(self, widths: ExpandWidths = ExpandWidths(1,1,1,1) ) -> bool:
@@ -210,7 +213,7 @@ class Agent(ABC):
                 if consecutive_expand > 0:
                     print("Planning still failed after expanding.")
                     return False
-                if self.expand_map():
+                if self.expand_map(ExpandWidths(5,5,5,5)):
                     consecutive_expand += 1
                 else:
                     return False
@@ -261,10 +264,12 @@ class A_star_agent(Agent):
     '''
     Agent that implements weighted A*.
     '''
-    def __init__(self, init_map_size=(40, 40), max_map_size=None, eps=1) -> None:
+    def __init__(self, init_map_size=(5, 5), max_map_size=None, eps=1) -> None:
         super().__init__(init_map_size, max_map_size)
         # Also define the weight used in A*
         self.eps = eps
+        self.num_expanded_nodes = 0
+        self.max_queue_size = 0
 
     def cone_of_vision(self) -> list:
         return cone_of_vision_8()
@@ -300,6 +305,9 @@ class A_star_agent(Agent):
             if parent_ind[0] == goal_ind[0] and parent_ind[1] == goal_ind[1]:
                 done = True
                 break
+            self.num_expanded_nodes += 1
+            if len(OPEN) > self.max_queue_size:
+                self.max_queue_size = len(OPEN)
             # get neighbors
             infos = self.get_neighbors(parent_ind)
             # # Get list of children
@@ -337,10 +345,12 @@ class D_star_agent(Agent):
     '''
     Agent that implements D* Lite.
     '''
-    def __init__(self, init_map_size=(40, 40), max_map_size=(10,10)) -> None:
+    def __init__(self, init_map_size=(5,5), max_map_size=None) -> None:
         super().__init__(init_map_size, max_map_size)
         self._init_search_structs()
         self._last_map_change_pos = self.pos
+        self.max_queue_size = 0
+        self.num_expanded_nodes = 0
 
     def cone_of_vision(self) -> list:
         return cone_of_vision_8()
@@ -358,6 +368,7 @@ class D_star_agent(Agent):
         self._k_m = 0
         self._g = np.ones(self._map.shape) * np.inf
         self._rhs = np.ones(self._map.shape) * np.inf
+        self._last_map_change_pos = self.pos
         # self._rhs[tuple(self.target)] = 0
         # self._U[tuple(self.target)] = (self._heuristic(self.pos, self.target), 0)
 
@@ -377,6 +388,11 @@ class D_star_agent(Agent):
         # print("Started search from", tuple(self.pos), "to", tuple(self.target))
         k = 0
         while len(self._U) != 0 and (self._U.topitem()[1] < self._calculate_key(tuple(self.pos)) or self._rhs[tuple(self.pos)] > self._g[tuple(self.pos)]):
+            if len(self._U) > self.max_queue_size:
+                self.max_queue_size = len(self._U)
+            
+            self.num_expanded_nodes += 1
+            
             k += 1
             u = self._U.topitem()[0]
             key_old = self._U.topitem()[1]
@@ -407,24 +423,33 @@ class D_star_agent(Agent):
 
     def plan_algo(self) -> bool:
         self._compute_shortest_path()
-        # print(self._g)
-        # print(self._rhs)
+        if self._rhs[tuple(self.pos)] == np.inf:
+            if len(self._U) == 0:
+                # exhausted nodes to search
+                # however this could be due to problems with map change
+                # reset and search one more time
+                self._init_search_structs()
+                self._rhs[tuple(self.target)] = 0
+                self._U[tuple(self.target)] = (self._heuristic(self.pos, self.target), 0)
+                self._compute_shortest_path()
         if self._rhs[tuple(self.pos)] == np.inf:
             # could not find a path
             self._path = np.array([])
             return False
         else:
             incomplete_path = False
-            count = 0
+            path_dict = {}
             path = []
             pos = self.pos
             while True:
-                count += 1
-                if count > self._map.shape[0] * self._map.shape[1]:
+                path.append(pos)
+                if tuple(pos) in path_dict:
                     incomplete_path = True
                     break
-                path.append(pos)
+                else:
+                    path_dict[tuple(pos)] = 1
                 if pos[0] == self.target[0] and pos[1] == self.target[1]:
+                    # found a complete path
                     break
                 else:
                     neighbors = self.get_neighbors(tuple(pos))
@@ -437,6 +462,7 @@ class D_star_agent(Agent):
                     pos = np.array(pos)
 
             if incomplete_path:
+                # get just one next step
                 neighbors = self.get_neighbors(tuple(self.pos))
                 pos = neighbors[0].coord
                 min_cost = neighbors[0].cost + self._g[neighbors[0].coord]
@@ -455,7 +481,7 @@ class D_star_agent(Agent):
         map_changed = False
         for res in scan_result:
             v = self.pos + res[0]
-            while not self.in_bounds(v):
+            if not self.in_bounds(v) or v[0] == 0 or v[0] == self._map.shape[0]-1 or v[1] == 0 or v[1] == self._map.shape[1]-1:
                 self.expand_map(self._get_expand_map_widths(v))
                 v = self.pos + res[0]
             if res[1] == ScanStatus.OBSTACLE:
@@ -499,6 +525,40 @@ class D_star_agent(Agent):
         # so it won't lead to the target
         return super().path_valid() and self._path_ind+1 < self._path.shape[0]
 
+    def expand_map(self, widths: ExpandWidths = ExpandWidths(1, 1, 1, 1)) -> bool:
+        '''
+        Used when the current map is too small.
+        wdiths (UP, DOWN, LEFT, RIGHT)
+        '''
+        if self.max_map_size is None or (self._map.shape[0] < self.max_map_size[0] and self._map.shape[1] < self.max_map_size[1]):
+            self._map = np.pad(self._map, ((widths.top, widths.down), (widths.left, widths.right)), constant_values=MapStatus.EMPTY)
+
+            # also pad the arrays storing distance estimates
+            self._g = np.pad(self._g, ((widths.top, widths.down), (widths.left, widths.right)), constant_values=np.inf)
+            self._rhs = np.pad(self._rhs, ((widths.top, widths.down), (widths.left, widths.right)), constant_values=np.inf)
+
+            pos_offsets = np.array([widths.top, widths.left])
+            self.pos = self.pos + pos_offsets
+            self.init_pos = self.init_pos + pos_offsets
+            self.target = self.target + pos_offsets
+            if self._path is not None and self._path.shape[0] != 0:
+                self._path += pos_offsets
+
+            # adjust the variable used to keep track of priority bounds
+            self._last_map_change_pos += pos_offsets
+
+            # rebuild the priority queue
+            temp = [item for item in self._U.items()]
+            while len(temp) > 0:
+                t = temp.pop()
+                # adjust the coordinate
+                old_coords = t[0]
+                new_coords = (old_coords[0]+pos_offsets[0], old_coords[1]+pos_offsets[1])
+                self._U[new_coords] = t[1]
+
+            return True
+        else:
+            return False
             
 
 
