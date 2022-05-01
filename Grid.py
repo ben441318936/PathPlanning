@@ -1,6 +1,9 @@
 import numpy as np
 from enum import IntEnum
 
+from skimage.draw import line as raytrace
+
+
 class GridStatus(IntEnum):
     EMPTY = 0
     OBSTACLE = 1
@@ -137,10 +140,11 @@ class Grid(object):
         else:
             return False
 
-    def scan(self,area) -> list:
+    def scan_cells(self,area) -> list:
         '''
-        Takes in a list of coordinate offsets, centered around the agent.
+        Takes in a list of coordinate offsets as np 2-vector, centered around the agent.
         Return the status of each coordinate.
+        The status can be EMPTY or OBSTACLE or TARGET or BOTH
         '''
         result = []
         for offset in area:
@@ -149,9 +153,48 @@ class Grid(object):
                 result.append((offset, ScanStatus.OBSTACLE))
             elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
                 result.append((offset, ScanStatus.EMPTY))
-            else:
-                result.append((offset, self._grid[coord[0],coord[1]]))
+            elif self._grid[coord[0],coord[1]] == GridStatus.AGENT:
+                result.append((offset, ScanStatus.AGENT))
+            elif self._grid[coord[0],coord[1]] == GridStatus.TARGET:
+                result.append((offset, ScanStatus.TARGET))
+            elif self._grid[coord[0],coord[1]] == GridStatus.BOTH:
+                result.append((offset, ScanStatus.BOTH))
         return result
+
+    def scan_cone(self,cone_ends) -> list:
+        '''
+        Takes in a list of coordinates, representing the endpoints of a cone centered around the agent.
+        Return the status of each coordinate.
+        The status can be EMPTY or OBSTACLE or AGENT or TARGET or BOTH.
+        
+        This works by performing ray tracing, starting from the agent pos, ending at each endpoint.
+        The ray will stop at the first cell is that is TARGET or OBSTACLE.
+        All cells before this cell will be EMPTY.
+        Return nothing for cells after the obstacle since agent can not see it.
+        '''
+        result = {}
+        for end_offset in cone_ends:
+            endpoints = self.agent_pos + end_offset
+            ray_cc, ray_rr = raytrace(self.agent_pos[0], self.agent_pos[1], endpoints[0], endpoints[1])
+            for c, r in zip(ray_cc, ray_rr):
+                coord = (c,r)
+                offset = (c - self.agent_pos[0], r - self.agent_pos[1])
+                if not self.in_bounds(coord) or self._grid[coord[0],coord[1]] == GridStatus.OBSTACLE:
+                    result[coord] = (offset, ScanStatus.OBSTACLE)
+                    break
+                elif self._grid[coord[0],coord[1]] == GridStatus.TARGET:
+                    result[coord] = (offset, ScanStatus.TARGET)
+                    break
+                elif self._grid[coord[0],coord[1]] == GridStatus.BOTH:
+                    result[coord] = (offset, ScanStatus.BOTH)
+                    break
+                elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
+                    result[coord] = (offset, ScanStatus.EMPTY)
+                elif self._grid[coord[0],coord[1]] == GridStatus.AGENT:
+                    result[coord] = (offset, ScanStatus.AGENT)
+                
+        result_list = [val for val in result.values()]
+        return result_list
 
     def relative_target_pos(self) -> None:
         '''
@@ -178,3 +221,5 @@ if __name__ == "__main__":
     G.agent_move(Direction.UP)
     print("After agent move")
     G.print_grid()
+
+    print(G.scan_cone([np.array([0,-2])]))

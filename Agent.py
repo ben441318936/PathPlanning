@@ -115,7 +115,7 @@ class Agent(ABC):
                 coord = self.pos + res[0]
             if res[1] == ScanStatus.OBSTACLE:
                 self._map[coord[0],coord[1]] = MapStatus.OBSTACLE
-            elif res[1] == ScanStatus.TARGET:
+            elif res[1] == ScanStatus.TARGET or res[1] == ScanStatus.BOTH:
                 self._map[coord[0],coord[1]] = MapStatus.TARGET
             elif res[1] == ScanStatus.EMPTY:
                 self._map[coord[0],coord[1]] = MapStatus.EMPTY

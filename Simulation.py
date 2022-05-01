@@ -80,7 +80,7 @@ class Simulation(object):
                             started = True
 
         # do an initial scan
-        self.agent.update_map(self.grid.scan(self.agent.cone_of_vision()))
+        self.agent.update_map(self.grid.scan_cells(self.agent.cone_of_vision()))
 
         finished = self.grid.agent_reached_target()
         # search loop
