@@ -5,8 +5,10 @@ import sys
 
 from time import time
 
+from functools import partial
+
 import pygame
-from Agent import A_star_agent, D_star_agent, MapStatus
+from Agent import A_star_agent, D_star_agent, MapStatus, scan_8_grid, scan_circular
 from Grid import Grid, GridStatus
 
 Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
@@ -56,11 +58,11 @@ class Simulation(object):
         else:
             self.grid.place_target(target_pos, force=True)
 
-    def init_agent(self, agent_class) -> None:
+    def init_agent(self, agent_class, vision_func) -> None:
         if self.grid is None:
             print("No grid, can't initialize agent.")
             sys.exit()
-        self.agent = agent_class()
+        self.agent = agent_class(vision_func=vision_func)
         self.agent.set_target(self.grid.relative_target_pos())
 
     def reset(self) -> None:
@@ -80,7 +82,7 @@ class Simulation(object):
                             started = True
 
         # do an initial scan
-        self.agent.update_map(self.grid.scan_cells(self.agent.cone_of_vision()))
+        self.agent.update_map(self.grid.scan_cone(self.agent.cone_of_vision()))
 
         finished = self.grid.agent_reached_target()
         # search loop
@@ -104,7 +106,7 @@ class Simulation(object):
                 print("Agent knowledge does not allow the next action.")
                 break
             # agent scan and update
-            self.agent.update_map(self.grid.scan(self.agent.cone_of_vision()))
+            self.agent.update_map(self.grid.scan_cone(self.agent.cone_of_vision()))
             # check for reaching target
             finished = self.grid.agent_reached_target()
 
@@ -302,7 +304,14 @@ if __name__ == "__main__":
     map_width = map_height = 20
     sim.init_grid((map_height, map_width))
     sim.fill_random_grid(probability=0.4, seed=1)
-    sim.init_agent(A_star_agent)
+
+    # sim.grid.set_obstacle((7,slice(0,17,None)))
+    # sim.grid.set_obstacle((10,slice(0,17,None)))
+    # sim.grid.set_obstacle((13,slice(0,17,None)))
+    # sim.grid.place_agent((18,10),True)
+    # sim.grid.place_target((3,10),True)
+
+    sim.init_agent(agent_class=D_star_agent, vision_func=partial(scan_circular, radius=5))
 
     sim.render_frame()
 

@@ -80,6 +80,10 @@ class Grid(object):
         return self._grid[coord[0],coord[1]] != GridStatus.OBSTACLE
 
     def set_obstacle(self, ind_slices) -> None:
+        '''
+        Pass in a tuple of slice objects
+        slice(start,stop,step)
+        '''
         self._grid[ind_slices] = GridStatus.OBSTACLE
 
     def fill_random_grid(self, probability) -> None:
@@ -142,14 +146,14 @@ class Grid(object):
 
     def scan_cells(self,area) -> list:
         '''
-        Takes in a list of coordinate offsets as np 2-vector, centered around the agent.
+        Takes in a list of coordinate offsets, centered around the agent.
         Return the status of each coordinate.
         The status can be EMPTY or OBSTACLE or TARGET or BOTH
         '''
         result = []
         for offset in area:
-            coord = self.agent_pos + offset
-            if not self.in_bounds(coord):
+            coord = self.agent_pos + np.array(offset)
+            if not self.in_bounds(coord) or self._grid[coord[0],coord[1]] == GridStatus.OBSTACLE:
                 result.append((offset, ScanStatus.OBSTACLE))
             elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
                 result.append((offset, ScanStatus.EMPTY))
@@ -174,7 +178,7 @@ class Grid(object):
         '''
         result = {}
         for end_offset in cone_ends:
-            endpoints = self.agent_pos + end_offset
+            endpoints = self.agent_pos + np.array(end_offset)
             ray_cc, ray_rr = raytrace(self.agent_pos[0], self.agent_pos[1], endpoints[0], endpoints[1])
             for c, r in zip(ray_cc, ray_rr):
                 coord = (c,r)
@@ -188,10 +192,11 @@ class Grid(object):
                 elif self._grid[coord[0],coord[1]] == GridStatus.BOTH:
                     result[coord] = (offset, ScanStatus.BOTH)
                     break
-                elif self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
-                    result[coord] = (offset, ScanStatus.EMPTY)
-                elif self._grid[coord[0],coord[1]] == GridStatus.AGENT:
-                    result[coord] = (offset, ScanStatus.AGENT)
+                elif not (coord in result):
+                    if self._grid[coord[0],coord[1]] == GridStatus.EMPTY or self._grid[coord[0],coord[1]] == GridStatus.PREV_AGENT:
+                        result[coord] = (offset, ScanStatus.EMPTY)
+                    elif self._grid[coord[0],coord[1]] == GridStatus.AGENT:
+                        result[coord] = (offset, ScanStatus.AGENT)
                 
         result_list = [val for val in result.values()]
         return result_list
@@ -221,5 +226,3 @@ if __name__ == "__main__":
     G.agent_move(Direction.UP)
     print("After agent move")
     G.print_grid()
-
-    print(G.scan_cone([np.array([0,-2])]))

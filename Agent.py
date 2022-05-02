@@ -6,8 +6,7 @@ from pqdict import pqdict
 
 from enum import IntEnum
 
-from Grid import Vec2Dir, Dir2Vec, ScanStatus
-
+from Grid import Grid, Vec2Dir, Dir2Vec, ScanStatus
 
 class MapStatus(IntEnum):
     EMPTY = 0
@@ -20,9 +19,9 @@ ExpandWidths = namedtuple("ExpandWidths", ["top", "down", "left", "right"])
 
 VertexInfo = namedtuple("VertexInfo", ["coord", "cost"])
 
-### Cone of vision functions ###
+### Surrounding scan functions ###
 
-def cone_of_vision_8() -> list:
+def scan_8_grid() -> list:
     '''
     Area that the agent can see.
     The coordinates of the cells in this area 
@@ -32,6 +31,21 @@ def cone_of_vision_8() -> list:
     # can be in any order
     area = [np.array([i,j]) for j in range(-1,2) for i in range(-1,2)]
     return area
+
+def scan_circular(radius, ang_res=0.1) -> list:
+    '''
+    Area that the agent can see, in a circular region.
+        radius: radius of the region
+        ang_res: angular resolution for generating the points on the circle
+    Output is a list of points on the circle, compatible with the raytracing scanning in Grid.
+    '''
+    angs = np.arange(0, 2*np.pi, ang_res)
+    rows = np.around(radius * np.sin(angs)).astype(int)
+    cols = np.around(radius * np.cos(angs)).astype(int)
+    endpoints = [(rows[i], cols[i]) for i in range(rows.shape[0])]
+    endpoints = list(dict.fromkeys(endpoints))
+    return endpoints
+
 
 ### Base agent class ###
 
@@ -261,15 +275,16 @@ class A_star_agent(Agent):
     '''
     Agent that implements weighted A*.
     '''
-    def __init__(self, init_map_size=(5, 5), max_map_size=None, eps=1) -> None:
+    def __init__(self, init_map_size=(5, 5), max_map_size=None, eps=1, vision_func=scan_8_grid) -> None:
         super().__init__(init_map_size, max_map_size)
         # Also define the weight used in A*
         self.eps = eps
         self.num_expanded_nodes = 0
         self.max_queue_size = 0
+        self.scan_points = vision_func()
 
     def cone_of_vision(self) -> list:
-        return cone_of_vision_8()
+        return self.scan_points
 
     def plan_algo(self) -> bool:
         '''
@@ -342,15 +357,16 @@ class D_star_agent(Agent):
     '''
     Agent that implements D* Lite.
     '''
-    def __init__(self, init_map_size=(5,5), max_map_size=None) -> None:
+    def __init__(self, init_map_size=(5,5), max_map_size=None, vision_func=scan_8_grid) -> None:
         super().__init__(init_map_size, max_map_size)
         self._init_search_structs()
         self._last_map_change_pos = self.pos
         self.max_queue_size = 0
         self.num_expanded_nodes = 0
+        self.scan_points = vision_func()
 
     def cone_of_vision(self) -> list:
-        return cone_of_vision_8()
+        return self.scan_points
 
     def set_target(self, target_pos) -> None:
         super().set_target(target_pos)
@@ -558,5 +574,12 @@ class D_star_agent(Agent):
             return False
             
 
-
-
+if __name__ == "__main__":
+    G = Grid((10,10))
+    print("Initialization")
+    G.print_grid()
+    G.place_agent((3,3))
+    G.place_target((2,2))
+    print("After placement")
+    G.print_grid()
+    
