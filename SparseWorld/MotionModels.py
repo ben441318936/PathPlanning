@@ -29,8 +29,29 @@ class MotionModel(ABC):
         return self._input_dim
 
     @abstractmethod
-    def step(self, state, input, braking=False) -> None:
+    def step(self, state: np.ndarray, input: np.ndarray, braking=False) -> None:
         pass
+
+    @abstractmethod
+    def position_state_idx(self) -> tuple:
+        pass
+
+    @abstractmethod
+    def state_2_position(self, state: np.ndarray) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def state_2_heading(self, state: np.ndarray) -> np.ndarray:
+        pass
+    
+    @abstractmethod
+    def state_2_yaw_rate(self, state: np.ndarray) -> np.ndarray:
+        pass
+
+    @abstractmethod
+    def state_2_velocity(self, state: np.ndarray) -> np.ndarray:
+        pass
+
 
 class DifferentialDrive(MotionModel):
     '''
@@ -91,6 +112,9 @@ class DifferentialDrive(MotionModel):
             return new_state
         else:
             return np.squeeze(new_state, axis=0)
+
+    def position_state_idx(self) -> tuple:
+        return slice(0,2,None)
 
     def state_2_position(self, state: np.ndarray) -> np.ndarray:
         state = state.reshape((-1,5))
