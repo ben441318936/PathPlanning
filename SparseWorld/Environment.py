@@ -141,13 +141,14 @@ class Environment():
                 int_points.append(result.endpoint)
         return int_points
 
-    def scan_cone(self, angle_range: tuple = (0,2*np.pi), max_range=1, resolution=0.1) -> List[ScanResult]:
+    def scan_cone(self, angle_range: tuple = (0,2*np.pi), max_range=1, resolution=10/180*np.pi) -> List[ScanResult]:
         '''
         0 radian is the heading of the agent.
         Output is a list of ScanResults (angle, range) measurements
         '''
         results = []
-        angles = np.arange(angle_range[0], angle_range[1], resolution)
+        num_points = int((angle_range[1] - angle_range[0]) / resolution)
+        angles = np.linspace(angle_range[0], angle_range[1], num_points, endpoint=True)
         cone_ends = np.array([max_range * np.cos(angles), max_range * np.sin(angles)]).T
         for i in range(angles.shape[0]):
             ray = np.array([self.agent_position, self.agent_position + cone_ends[i,:]])
@@ -171,7 +172,7 @@ if __name__ == "__main__":
 
     E.add_obstacle(Obstacle(top=53,bottom=49,left=52,right=55))
 
-    results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=0.05)
+    results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5)
 
     plt.figure()
     for res in results:
