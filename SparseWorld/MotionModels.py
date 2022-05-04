@@ -32,12 +32,16 @@ class MotionModel(ABC):
     def step(self, state: np.ndarray, input: np.ndarray, braking=False) -> None:
         pass
 
-    @abstractmethod
+    @property
     def position_state_idx(self) -> tuple:
         pass
 
     @abstractmethod
     def state_2_position(self, state: np.ndarray) -> np.ndarray:
+        pass
+
+    @property
+    def heading_state_idx(self) -> int:
         pass
 
     @abstractmethod
@@ -113,6 +117,7 @@ class DifferentialDrive(MotionModel):
         else:
             return np.squeeze(new_state, axis=0)
 
+    @property
     def position_state_idx(self) -> tuple:
         return slice(0,2,None)
 
@@ -123,6 +128,10 @@ class DifferentialDrive(MotionModel):
             return state[:,0:2]
         else:
             return state[0,0:2]
+
+    @property
+    def heading_state_idx(self) -> tuple:
+        return 2
 
     def state_2_heading(self, state: np.ndarray) -> np.ndarray:
         state = state.reshape((-1,5))

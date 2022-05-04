@@ -56,7 +56,7 @@ class Environment():
     @agent_position.setter
     def agent_position(self, position: np.ndarray) -> bool:
         if len(position.shape) == 1 and position.shape[0] == 2:
-            self._agent_state[self._motion_model.position_state_idx()] = position
+            self._agent_state[self._motion_model.position_state_idx] = position
             return True
         else:
             return False
@@ -64,6 +64,10 @@ class Environment():
     @property
     def agent_heading(self) -> np.ndarray:
         return self._motion_model.state_2_heading(self._agent_state)
+
+    @agent_heading.setter
+    def agent_heading(self, heading: float) -> bool:
+        self._agent_state[self._motion_model.heading_state_idx] = heading
 
     @property
     def agent_yaw_rate(self) -> np.ndarray:
@@ -141,14 +145,14 @@ class Environment():
                 int_points.append(result.endpoint)
         return int_points
 
-    def scan_cone(self, angle_range: tuple = (0,2*np.pi), max_range=1, resolution=10/180*np.pi) -> List[ScanResult]:
+    def scan_cone(self, angle_range: tuple = (0,2*np.pi), max_range=1, resolution=5/180*np.pi) -> List[ScanResult]:
         '''
         0 radian is the heading of the agent.
         Output is a list of ScanResults (angle, range) measurements
         '''
         results = []
         num_points = int((angle_range[1] - angle_range[0]) / resolution)
-        angles = np.linspace(angle_range[0], angle_range[1], num_points, endpoint=True)
+        angles = np.linspace(angle_range[0], angle_range[1], num_points, endpoint=True) + self.agent_heading
         cone_ends = np.array([max_range * np.cos(angles), max_range * np.sin(angles)]).T
         for i in range(angles.shape[0]):
             ray = np.array([self.agent_position, self.agent_position + cone_ends[i,:]])
@@ -168,7 +172,9 @@ if __name__ == "__main__":
     M = DifferentialDrive(sampling_period=0.1)
     E = Environment(motion_model=M)
 
-    print(E.agent_position)
+    E.agent_heading = np.pi/4
+
+    print("position:", E.agent_position, "heading:", E.agent_heading)
 
     E.add_obstacle(Obstacle(top=53,bottom=49,left=52,right=55))
 
