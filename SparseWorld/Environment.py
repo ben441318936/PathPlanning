@@ -25,10 +25,10 @@ ScanResult = namedtuple("ScanResult", ["angle", "range"])
 class Environment():
     def __init__(self, env_size=(100,100), motion_model: MotionModel = None) -> None:
         self.env_size = env_size
-        self._motion_model = motion_model
+        self._motion_model : MotionModel = motion_model
         self._agent_state = np.zeros((self._motion_model.state_dim))
         self.agent_position = np.array([env_size[0]/2, env_size[1]/2])
-        self._obstacles = []
+        self._obstacles : List[Obstacle] = []
 
     def add_obstacle(self, obs: Obstacle) -> bool:
         if obs.left >= 0 and obs.right <= self.env_size[0] and obs.bottom >= 0 and obs.top <= self.env_size[1]:
@@ -36,6 +36,14 @@ class Environment():
             return True
         else:
             return False
+
+    @property
+    def motion_model(self) -> MotionModel:
+        return self._motion_model
+
+    @property
+    def Obstacles(self) -> List[Obstacle]:
+        return self._obstacles
 
     @property
     def agent_state(self) -> np.ndarray:
@@ -62,7 +70,7 @@ class Environment():
             return False
 
     @property
-    def agent_heading(self) -> np.ndarray:
+    def agent_heading(self) -> float:
         return self._motion_model.state_2_heading(self._agent_state)
 
     @agent_heading.setter
@@ -70,11 +78,11 @@ class Environment():
         self._agent_state[self._motion_model.heading_state_idx] = heading
 
     @property
-    def agent_yaw_rate(self) -> np.ndarray:
+    def agent_yaw_rate(self) -> float:
         return self._motion_model.state_2_yaw_rate(self._agent_state)
 
     @property
-    def agent_velocity(self) -> np.ndarray:
+    def agent_velocity(self) -> float:
         return self._motion_model.state_2_velocity(self._agent_state)
 
     def agent_take_step(self, input, braking=False) -> bool:
@@ -174,9 +182,7 @@ if __name__ == "__main__":
 
     E.agent_heading = np.pi/4
 
-    print("position:", E.agent_position, "heading:", E.agent_heading)
-
-    E.add_obstacle(Obstacle(top=53,bottom=49,left=52,right=55))
+    E.add_obstacle(Obstacle(top=53,bottom=50,left=52,right=55))
 
     results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5)
 

@@ -61,7 +61,7 @@ class DifferentialDrive(MotionModel):
     '''
     Parameters are:
         wheel radius
-        wheel moment of inertial
+        robot mass: includes body and both wheels
         axel length
         wheel friction: [0,1), controls how much the wheel velocity decays nominally
         braking friction: [0,1), controls how much the wheel velocity decays when braking
@@ -76,7 +76,7 @@ class DifferentialDrive(MotionModel):
         self._input_dim = 2
         self._parameters = {
             "wheel radius": 1,
-            "wheel moment of inertia": 1,
+            "robot mass": 1,
             "axel length": 1,
             "wheel friction": 0.1,
             "braking friction": 0.5
@@ -100,7 +100,7 @@ class DifferentialDrive(MotionModel):
 
         v = (state[:,3] + state[:,4]) * self._parameters["wheel radius"] / 2
         w = (state[:,3] - state[:,4]) * self._parameters["wheel radius"] / self._parameters["axel length"]
-        a = input_torque / self._parameters["wheel moment of inertia"]
+        a = input_torque / (self._parameters["robot mass"] * self._parameters["wheel radius"]**2)
         
         if braking:
             decay = self._parameters["braking friction"]
