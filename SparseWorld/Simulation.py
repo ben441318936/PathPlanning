@@ -7,9 +7,9 @@ from time import time
 
 from functools import partial
 
-from MotionModels import DifferentialDrive
+from MotionModels import DifferentialDrive, DifferentialDriveVelocityInput
 from Environment import Environment, Obstacle
-from Controller import simple_control
+from Controller import Controller, DoublePDControl, PVelocityControl
 
 import pygame
 pygame.init()
@@ -17,7 +17,7 @@ pygame.init()
 Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
 
 class Simulation(object):
-    def __init__(self, env: Environment, goal: np.ndarray=None, render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
+    def __init__(self, env: Environment, controller: Controller, goal: np.ndarray=None, render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
         self.render = render
         self.window_size = window_size
         self.FPS = FPS
@@ -25,6 +25,7 @@ class Simulation(object):
         self.center_col_width = center_col_width
         self.env : Environment = env
         self.goal : np.ndarray = goal
+        self.controller :Controller = controller
 
         if render and (window_size is None or FPS is None):
             print("Render set to True, but no render parameters given.")
@@ -67,13 +68,12 @@ class Simulation(object):
                 self.check_render_next()  
 
         while not self.env.position_out_of_bounds(self.env.agent_position):
-            input_torque = simple_control(self.env.motion_model, self.env.agent_state, self.goal)
+            # input_torque = simple_control(self.env.motion_model, self.env.agent_state, self.goal)
+            input_torque = self.controller.control(self.env.agent_state, self.goal)
             # input_torque = np.array([-10,10])
             if not self.env.agent_take_step(input=input_torque):
                 print("Can't take step")
                 break
-            print(self.env.agent_position)
-            print(self.env.agent_heading)
 
             # render
             if self.render:
@@ -110,6 +110,7 @@ class Simulation(object):
             obs_rect = pygame.Rect(scaled_obs.left, scaled_obs.top, scaled_obs.right - scaled_obs.left, scaled_obs.bottom - scaled_obs.top)
             pygame.draw.rect(self.screen, self.color_dict["brown"], obs_rect)
 
+        # draw agent
         agent_heading = -self.env.agent_heading # negative here because pygames has a different coordinate system
         w = 10
         points = np.array([[0,  -w,  w,  -w],
@@ -120,6 +121,10 @@ class Simulation(object):
         agent_pos = np.array([scale_x(self.env.agent_position[0]), scale_y(self.env.agent_position[1])])
         final_pts = agent_pos.reshape((2,1)) + rotated
         pygame.draw.polygon(self.screen, self.color_dict["red"], [final_pts[:,0], final_pts[:,1], final_pts[:,2], final_pts[:,3]])
+
+        # draw goal
+        scaled_goal = (scale_x(self.goal[0]), scale_y(self.goal[1]))
+        pygame.draw.circle(self.screen, self.color_dict["green"], scaled_goal, 3)
 
 
 
@@ -179,13 +184,17 @@ class Simulation(object):
 
 
 if __name__ == "__main__":
-    M = DifferentialDrive(sampling_period=0.1)
+    M = DifferentialDriveVelocityInput(sampling_period=0.01)
     E = Environment(motion_model=M)
     # E.agent_heading = np.pi/4
     # E.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
     # E.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
 
-    S = Simulation(E, goal=np.array([60,60]), render=True, window_size=(1050, 550), FPS=10, render_offset=Offset(50,0,0,0), center_col_width=50)
+    # E.agent_heading = 2*np.pi
+
+    C = PVelocityControl(M, v_max=10, w_max=90/180*np.pi)
+
+    S = Simulation(E, C, goal=np.array([10,50]), render=True, window_size=(1050, 550), FPS=60, render_offset=Offset(50,0,0,0), center_col_width=50)
 
     S.render_frame()
 
