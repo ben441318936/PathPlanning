@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from turtle import heading
 import numpy as np
+from control.matlab import *
 
 from MotionModels import MotionModel, DifferentialDrive, DifferentialDriveVelocityInput
 
@@ -24,8 +24,8 @@ def simple_control(motion_model: MotionModel, curr_state: np.ndarray, goal_pos: 
     return np.array([K_V_T * (v_goal - curr_velocity) + K_W_T * (w_goal - curr_yaw_rate), K_V_T * (v_goal - curr_velocity) - K_W_T * (w_goal - curr_yaw_rate)])
 
 class Controller(ABC):
-    def __init__(self) -> None:
-        pass
+    def __init__(self, motion_model: MotionModel) -> None:
+        self._motion_model = motion_model
 
     @abstractmethod
     def control(self) -> np.ndarray:
@@ -34,7 +34,8 @@ class Controller(ABC):
 
 class PVelocityControl(Controller):
     def __init__(self, motion_model: MotionModel, v_max=None, w_max=None) -> None:
-        self._motion_model = motion_model
+        super().__init__(motion_model)
+        # self._motion_model = motion_model
         self.v_max = v_max
         self.w_max = w_max
 
@@ -72,6 +73,37 @@ class PVelocityControl(Controller):
             w = np.sign(w) * self.w_max
 
         return np.array([v, w])
+
+class PVelocitySSTorqueControl(PVelocityControl):
+    def __init__(self, motion_model: MotionModel, v_max=None, w_max=None, T_max=None, Q=np.eye(2), R=np.eye(2)) -> None:
+        super().__init__(motion_model, v_max, w_max)
+        self.T_max = T_max
+        self.Q = Q
+        self.R = R
+        self.compute_gain() # this sets self.K
+
+    def compute_gain(self):
+        # continuous time model params
+        A = np.array([[-self._motion_model.parameters["wheel friction"], 0], 
+                      [0, -self._motion_model.parameters["wheel friction"]]])
+        B_top = self._motion_model.parameters["wheel radius"] / 2 / self._motion_model.parameters["inertia"]
+        B_bot = self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["inertia"] / self._motion_model.parameters["axel length"]
+        B = np.array([[B_top, B_top], 
+                      [B_bot, -B_bot]])
+        # convert to discrete time
+        sys_c = ss(A, B, np.eye(2), np.zeros((2,2)))
+        sys_d = c2d(sys_c, self._motion_model.sampling_period)
+        # this lqr uses A-BK
+        self.K, S, E = lqr(sys_d, self.Q, self.R)
+        self.K = np.array(self.K)
+        
+    def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
+        v_w_ref = super().control(curr_state, goal_pos)
+        curr_v = self._motion_model.state_2_velocity(curr_state)
+        curr_w = self._motion_model.state_2_yaw_rate(curr_state)
+        # K was computed using A-BK
+        return -self.K @ (np.array([curr_v, curr_w] - v_w_ref))
+
 
 # WIP
 class DoublePDControl(Controller):

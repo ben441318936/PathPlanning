@@ -29,7 +29,7 @@ class MotionModel(ABC):
         return self._input_dim
 
     @abstractmethod
-    def step(self, state: np.ndarray, input: np.ndarray, braking=False) -> None:
+    def step(self, state: np.ndarray, input: np.ndarray) -> None:
         pass
 
     @property
@@ -71,7 +71,7 @@ class DifferentialDriveVelocityInput(MotionModel):
         if paremeters_dict is not None:
             self._parameters.update(paremeters_dict)
 
-    def step(self, state: np.ndarray, input_velocities: np.ndarray, braking=False) -> np.ndarray:
+    def step(self, state: np.ndarray, input_velocities: np.ndarray) -> np.ndarray:
         '''
         State is defined as [x,y,theta]
         Input is defined as [v,w]
@@ -80,8 +80,6 @@ class DifferentialDriveVelocityInput(MotionModel):
         States [N,3]
         Inputs [N,2]
         '''
-        if braking:
-            input_velocities = np.array([0,0])
 
         state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
@@ -166,12 +164,12 @@ class DifferentialDrive(MotionModel):
             "robot mass": 1,
             "axel length": 1,
             "wheel friction": 0.1,
-            "braking friction": 0.5
         }
         if paremeters_dict is not None:
             self._parameters.update(paremeters_dict)
+        self._parameters["inertia"] = self._parameters["robot mass"] * self._parameters["wheel radius"]**2
 
-    def step(self, state: np.ndarray, input_torque: np.ndarray, braking=False) -> np.ndarray:
+    def step(self, state: np.ndarray, input_torque: np.ndarray) -> np.ndarray:
         '''
         State is defined as [x,y,theta,phi_R,phi_L]
         Input is defined as [T_R,T_L]
@@ -183,22 +181,20 @@ class DifferentialDrive(MotionModel):
 
         state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
-        input_torque = input_torque.reshape((-1,2))
+        input_torque = input_torque.reshape((-1,self._input_dim))
 
         v = (state[:,3] + state[:,4]) * self._parameters["wheel radius"] / 2
         w = (state[:,3] - state[:,4]) * self._parameters["wheel radius"] / self._parameters["axel length"]
-        a = input_torque / (self._parameters["robot mass"] * self._parameters["wheel radius"]**2)
+        a = input_torque / self._parameters["inertia"]
         
-        if braking:
-            decay = self._parameters["braking friction"]
-        else:
-            decay = self._parameters["wheel friction"]
+        phi_decay = np.exp(-self._parameters["wheel friction"]*self.sampling_period)
+        state_decay = np.array([1,1,1,phi_decay,phi_decay]).reshape((-1,self._state_dim))
 
-        new_state = state + self._tau * np.vstack((v * np.cos(state[:,2]),
-                                                   v * np.sin(state[:,2]),
-                                                   w,
-                                                   a[:,0] - decay * state[:,3],
-                                                   a[:,1] - decay * state[:,4])).T
+        new_state = state_decay * state + self._tau * np.vstack((v * np.cos(state[:,2]),
+                                                                 v * np.sin(state[:,2]),
+                                                                 w,
+                                                                 a[:,0],
+                                                                 a[:,1])).T
         if N > 1:
             return new_state
         else:
