@@ -3,6 +3,7 @@ Implements motion models for the robot.
 '''
 
 from abc import ABC, abstractmethod
+from cmath import pi
 import numpy as np
 
 class MotionModel(ABC):
@@ -160,14 +161,17 @@ class DifferentialDrive(MotionModel):
         self._state_dim = 5
         self._input_dim = 2
         self._parameters = {
-            "wheel radius": 1,
-            "robot mass": 1,
+            "wheel radius": 0.5,
+            "robot mass": 10,
             "axel length": 1,
             "wheel friction": 0.1,
+            "max wheel rpm": 60,
+            "max motor torque": 100
         }
         if paremeters_dict is not None:
             self._parameters.update(paremeters_dict)
-        self._parameters["inertia"] = self._parameters["robot mass"] * self._parameters["wheel radius"]**2
+        self._parameters["inertia"] = self._parameters["robot mass"] / 2 * self._parameters["wheel radius"]**2
+        self._parameters["phi max"] = self._parameters["max wheel rpm"] / 60 * 2 * np.pi
 
     def step(self, state: np.ndarray, input_torque: np.ndarray) -> np.ndarray:
         '''
@@ -182,6 +186,7 @@ class DifferentialDrive(MotionModel):
         state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
         input_torque = input_torque.reshape((-1,self._input_dim))
+        input_torque = np.clip(input_torque, -self._parameters["max motor torque"], self._parameters["max motor torque"])
 
         v = (state[:,3] + state[:,4]) * self._parameters["wheel radius"] / 2
         w = (state[:,3] - state[:,4]) * self._parameters["wheel radius"] / self._parameters["axel length"]
@@ -195,6 +200,7 @@ class DifferentialDrive(MotionModel):
                                                                  w,
                                                                  a[:,0],
                                                                  a[:,1])).T
+        new_state[:,3:5] = np.clip(new_state[:,3:5], -self._parameters["phi max"], self._parameters["phi max"])
         if N > 1:
             return new_state
         else:

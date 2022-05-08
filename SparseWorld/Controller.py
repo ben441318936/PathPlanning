@@ -33,11 +33,8 @@ class Controller(ABC):
 
 
 class PVelocityControl(Controller):
-    def __init__(self, motion_model: MotionModel, v_max=None, w_max=None) -> None:
+    def __init__(self, motion_model: MotionModel) -> None:
         super().__init__(motion_model)
-        # self._motion_model = motion_model
-        self.v_max = v_max
-        self.w_max = w_max
 
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
         curr_pos = self._motion_model.state_2_position(curr_state)
@@ -67,17 +64,24 @@ class PVelocityControl(Controller):
 
         w = KP_W * heading_error
 
-        if self.v_max is not None and np.abs(v) > self.v_max:
-            v = np.sign(v) * self.v_max
-        if self.w_max is not None and np.abs(w) > self.w_max:
-            w = np.sign(w) * self.w_max
+        # adjust reference according to max rpm constraints
+        phi_r = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) + 
+                       w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
+        phi_l = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) -
+                       w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
+        phi = np.array([phi_r, phi_l])
+        phi_clip = np.clip(phi, -self._motion_model.parameters["phi max"], self._motion_model.parameters["phi max"])
+        ratio = phi_clip / phi
+        min_ratio = np.amin(ratio)
+
+        v = v * min_ratio
+        w = w * min_ratio
 
         return np.array([v, w])
 
 class PVelocitySSTorqueControl(PVelocityControl):
-    def __init__(self, motion_model: MotionModel, v_max=None, w_max=None, T_max=None, Q=np.eye(2), R=np.eye(2)) -> None:
-        super().__init__(motion_model, v_max, w_max)
-        self.T_max = T_max
+    def __init__(self, motion_model: MotionModel, Q=np.eye(2), R=np.eye(2)) -> None:
+        super().__init__(motion_model)
         self.Q = Q
         self.R = R
         self.compute_gain() # this sets self.K
@@ -102,7 +106,8 @@ class PVelocitySSTorqueControl(PVelocityControl):
         curr_v = self._motion_model.state_2_velocity(curr_state)
         curr_w = self._motion_model.state_2_yaw_rate(curr_state)
         # K was computed using A-BK
-        return -self.K @ (np.array([curr_v, curr_w] - v_w_ref))
+        T = -self.K @ (np.array([curr_v, curr_w] - v_w_ref))
+        return T
 
 
 # WIP
