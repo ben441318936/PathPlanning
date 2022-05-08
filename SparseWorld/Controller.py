@@ -45,7 +45,7 @@ class PVelocityControl(Controller):
         # outer loop, set reference v and w based on position and heading error
         pos_error = np.linalg.norm(goal_pos - curr_pos)
         # if close enough, don't move
-        if pos_error < 1:
+        if pos_error < 0.5:
             return np.array([0,0])
         heading_error = np.arctan2(np.sin(goal_heading-curr_heading), np.cos(goal_heading-curr_heading))
 

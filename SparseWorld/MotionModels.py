@@ -162,7 +162,7 @@ class DifferentialDrive(MotionModel):
         self._input_dim = 2
         self._parameters = {
             "wheel radius": 0.5,
-            "robot mass": 10,
+            "robot mass": 20,
             "axel length": 1,
             "wheel friction": 0.1,
             "max wheel rpm": 60,
