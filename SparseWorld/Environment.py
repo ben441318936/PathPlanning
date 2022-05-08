@@ -1,3 +1,12 @@
+'''
+Implements the environment in which a robot can move.
+
+Stores the (ground truth) state of the robot. 
+
+Supports Axis-Aligned Bounding-Box (AABB) type obstacles.
+Implements ray-trace based emulated LIDAR scanning against AABB obstacles.
+'''
+
 from collections import namedtuple
 from typing import List
 

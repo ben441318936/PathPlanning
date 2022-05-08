@@ -1,27 +1,18 @@
+'''
+Implements different control schemes.
+
+Uses the python controls toolbox with MATLAB compatibility module.
+
+Implements an abstract Controller class that defines the basic controller interface.
+Controller objects should take in a MotionModel object, and use the MotionModel utilities
+for state and parameter extraction.
+'''
+
 from abc import ABC, abstractmethod
 import numpy as np
 from control.matlab import *
 
 from MotionModels import MotionModel, DifferentialDrive, DifferentialDriveVelocityInput
-
-def simple_control(motion_model: MotionModel, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
-    curr_pos = motion_model.state_2_position(curr_state)
-    curr_heading = motion_model.state_2_heading(curr_state)
-    curr_heading = np.arctan2(np.cos(curr_heading), np.sin(curr_heading))
-    curr_yaw_rate = motion_model.state_2_yaw_rate(curr_state)
-    curr_velocity = motion_model.state_2_velocity(curr_state)
-    goal_heading = np.arctan2(goal_pos[1], goal_pos[0])
-
-    # outer loop, proportional for v and w
-    K_V = 1
-    v_goal = K_V * np.linalg.norm(goal_pos - curr_pos)
-    K_W = 1
-    w_goal = K_W * (1-np.cos(goal_heading-curr_heading))
-
-    # inner loop, propertional for torque
-    K_V_T = 1
-    K_W_T = 10
-    return np.array([K_V_T * (v_goal - curr_velocity) + K_W_T * (w_goal - curr_yaw_rate), K_V_T * (v_goal - curr_velocity) - K_W_T * (w_goal - curr_yaw_rate)])
 
 class Controller(ABC):
     def __init__(self, motion_model: MotionModel) -> None:
@@ -31,10 +22,18 @@ class Controller(ABC):
     def control(self) -> np.ndarray:
         pass
 
-
 class PVelocityControl(Controller):
-    def __init__(self, motion_model: MotionModel) -> None:
+    '''
+    Implements proportional control for linear rate and yaw rate
+    using position and heading feedback.
+
+    Velocity is proportional to L2 distance between curr and target position.
+    Yaw rate is proportional to heading error.
+    '''
+    
+    def __init__(self, motion_model: DifferentialDriveVelocityInput) -> None:
         super().__init__(motion_model)
+        self._motion_model = motion_model
 
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
         curr_pos = self._motion_model.state_2_position(curr_state)
@@ -46,7 +45,7 @@ class PVelocityControl(Controller):
         pos_error = np.linalg.norm(goal_pos - curr_pos)
         # if close enough, don't move
         if pos_error < 0.5:
-            return np.array([0,0])
+            return self._motion_model.create_velocities_dict(v=0, w=0)
         heading_error = np.arctan2(np.sin(goal_heading-curr_heading), np.cos(goal_heading-curr_heading))
 
         KP_V = 4
@@ -77,11 +76,20 @@ class PVelocityControl(Controller):
         v = v * min_ratio
         w = w * min_ratio
 
-        return np.array([v, w])
+        return self._motion_model.create_velocities_dict(v=v, w=w)
 
 class PVelocitySSTorqueControl(PVelocityControl):
-    def __init__(self, motion_model: MotionModel, Q=np.eye(2), R=np.eye(2)) -> None:
+    '''
+    Implements full state feedback torque control based on velocities reference.
+
+    Control law is based on the state space model from torque to velocity.
+
+    Gain is computed using LQR. Adjust Q and R to change gain.
+    '''
+
+    def __init__(self, motion_model: DifferentialDrive, Q=np.eye(2), R=np.eye(2)) -> None:
         super().__init__(motion_model)
+        self._motion_model = motion_model
         self.Q = Q
         self.R = R
         self.compute_gain() # this sets self.K
@@ -103,11 +111,12 @@ class PVelocitySSTorqueControl(PVelocityControl):
         
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
         v_w_ref = super().control(curr_state, goal_pos)
+        v_w_ref = np.array([v_w_ref["v"], v_w_ref["w"]])
         curr_v = self._motion_model.state_2_velocity(curr_state)
         curr_w = self._motion_model.state_2_yaw_rate(curr_state)
         # K was computed using A-BK
         T = -self.K @ (np.array([curr_v, curr_w] - v_w_ref))
-        return T
+        return self._motion_model.create_torque_dict(T_R=T[0], T_L=T[1])
 
 
 # WIP

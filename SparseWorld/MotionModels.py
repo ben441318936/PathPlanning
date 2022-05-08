@@ -1,12 +1,23 @@
 '''
 Implements motion models for the robot.
+
+Motion models define how a robot's state transitions with some known input.
+They do not store state information for the robot.
+Outside classes should implement state storage. 
+For example, an Environment class should store the state of a robot moving in it.
+An Agent class should store the (estimated) state of the robot as it moves, but 
+might also stored a vectorized set of possible states, depending on the estimation method.
+
+An abstract MotionModel class defines the basic interface and attributes of a motion model.
 '''
 
 from abc import ABC, abstractmethod
-from cmath import pi
 import numpy as np
 
 class MotionModel(ABC):
+    '''
+    Defines MotionModel interface
+    '''
     def __init__(self, sampling_period=1) -> None:
         self._tau = sampling_period
         self._parameters = {}
@@ -30,7 +41,7 @@ class MotionModel(ABC):
         return self._input_dim
 
     @abstractmethod
-    def step(self, state: np.ndarray, input: np.ndarray) -> None:
+    def step(self, state: np.ndarray, input_dict: dict) -> None:
         pass
 
     @property
@@ -58,29 +69,39 @@ class MotionModel(ABC):
         pass
 
 class DifferentialDriveVelocityInput(MotionModel):
-    def __init__(self, sampling_period=0.1, paremeters_dict=None) -> None:
+    '''
+    State is defined as [x,y,theta]:
+        x: x coordinate
+        y: y coordinate
+        theta: heading
+    Input is defined as [v,w]:
+        v: speed in the direction of heading
+        w: yaw rate (rate of change of heading)
+    '''
+    def __init__(self, sampling_period=1, paremeters_dict=None) -> None:
         super().__init__(sampling_period)
         self._state_dim = 3
         self._input_dim = 2
-        self._parameters = {
-            "wheel radius": 1,
-            "robot mass": 1,
-            "axel length": 1,
-            "wheel friction": 0.1,
-            "braking friction": 0.5
-        }
+        self._parameters = {}
         if paremeters_dict is not None:
             self._parameters.update(paremeters_dict)
 
-    def step(self, state: np.ndarray, input_velocities: np.ndarray) -> np.ndarray:
+    def create_velocities_dict(self, v=0, w=0) -> dict:
+        return {"v": v, "w": w}
+
+    def step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
         '''
         State is defined as [x,y,theta]
+
         Input is defined as [v,w]
 
         Supports vectorized operations for N states and inputs
         States [N,3]
-        Inputs [N,2]
+        v [N,1]
+        w [N,1]
         '''
+
+        input_velocities = np.vstack((input_dict["v"], input_dict["w"]))
 
         state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
@@ -127,33 +148,29 @@ class DifferentialDriveVelocityInput(MotionModel):
             return state[0,2]
     
     def state_2_yaw_rate(self, state: np.ndarray) -> np.ndarray:
-        state = state.reshape((-1,self._state_dim))
-        N = state.shape[0]
-        if N > 1:
-            return (state[:,3] - state[:,4]) * self._parameters["wheel radius"] / self._parameters["axel length"]
-        else:
-            return (state[0,3] - state[0,4]) * self._parameters["wheel radius"] / self._parameters["axel length"]
+        return None
 
     def state_2_velocity(self, state: np.ndarray) -> np.ndarray:
-        state = state.reshape((-1,self._state_dim))
-        N = state.shape[0]
-        if N > 1:
-            return (state[:,3] + state[:,4]) * self._parameters["wheel radius"] / 2
-        else:
-            return (state[0,3] + state[0,4]) * self._parameters["wheel radius"] / 2
+        return None
 
 
-class DifferentialDrive(MotionModel):
+class DifferentialDrive(DifferentialDriveVelocityInput):
     '''
+    State is defined as [x,y,theta,phi_R,phi_L]:
+        x: x coordinate
+        y: y coordinate
+        theta: heading
+        phi_R: angular velocity of right wheel
+        phi_L: angular velocity of left wheel
+    Input is defined as [T_R,T_L]:
+        T_R: torque on right wheel
+        T_L: torque on left wheel
+
     Parameters are:
         wheel radius
         robot mass: includes body and both wheels
         axel length
-        wheel friction: [0,1), controls how much the wheel velocity decays nominally
-        braking friction: [0,1), controls how much the wheel velocity decays when braking
-
-    State is defined as [x,y,theta,phi_R,phi_L]
-    Input is defined as [T_R,T_L]
+        wheel friction: [0,1): controls how much the wheel velocity decays due to friction
     '''
 
     def __init__(self, sampling_period=1, paremeters_dict=None) -> None:
@@ -173,7 +190,10 @@ class DifferentialDrive(MotionModel):
         self._parameters["inertia"] = self._parameters["robot mass"] / 2 * self._parameters["wheel radius"]**2
         self._parameters["phi max"] = self._parameters["max wheel rpm"] / 60 * 2 * np.pi
 
-    def step(self, state: np.ndarray, input_torque: np.ndarray) -> np.ndarray:
+    def create_torque_dict(self, T_R=0, T_L=0) -> dict:
+        return {"T_R": T_R, "T_L": T_L}
+
+    def step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
         '''
         State is defined as [x,y,theta,phi_R,phi_L]
         Input is defined as [T_R,T_L]
@@ -182,6 +202,8 @@ class DifferentialDrive(MotionModel):
         States [N,5]
         Inputs [N,2]
         '''
+
+        input_torque = np.vstack((input_dict["T_R"], input_dict["T_L"]))
 
         state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
@@ -262,8 +284,7 @@ if __name__ == "__main__":
     for i in range(50):
         pos.append(M.state_2_position(curr_state))
         vel.append(M.state_2_velocity(curr_state))
-        curr_state = M.step(curr_state, input_torque=np.array([[0.5,0.5],
-                                                               [0.5,0.5]]))
+        curr_state = M.step(curr_state, input_dict={"T_R": np.array([1,1]), "T_L": np.array([1,0.5])})
         # curr_state = M.step(curr_state, input_torque=np.array([0.5,0.5]))
 
     pos = np.array(pos)
@@ -276,5 +297,3 @@ if __name__ == "__main__":
     plt.subplot(1,2,2)
     plt.plot(vel)
     plt.show()
-
-    
