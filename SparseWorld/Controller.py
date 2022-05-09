@@ -15,8 +15,15 @@ from control.matlab import *
 from MotionModels import MotionModel, DifferentialDrive, DifferentialDriveVelocityInput
 
 class Controller(ABC):
+
+    __slots__ = ("_motion_model")
+
     def __init__(self, motion_model: MotionModel) -> None:
         self._motion_model = motion_model
+
+    @property
+    def motion_model(self) -> MotionModel:
+        return self._motion_model
 
     @abstractmethod
     def control(self) -> np.ndarray:
@@ -31,6 +38,8 @@ class PVelocityControl(Controller):
     Yaw rate is proportional to heading error.
     '''
     
+    __slots__ = ()
+
     def __init__(self, motion_model: DifferentialDriveVelocityInput) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
@@ -63,19 +72,6 @@ class PVelocityControl(Controller):
 
         w = KP_W * heading_error
 
-        # adjust reference according to max rpm constraints
-        phi_r = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) + 
-                       w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
-        phi_l = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) -
-                       w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
-        phi = np.array([phi_r, phi_l])
-        phi_clip = np.clip(phi, -self._motion_model.parameters["phi max"], self._motion_model.parameters["phi max"])
-        ratio = phi_clip / phi
-        min_ratio = np.amin(ratio)
-
-        v = v * min_ratio
-        w = w * min_ratio
-
         return self._motion_model.create_velocities_dict(v=v, w=w)
 
 class PVelocitySSTorqueControl(PVelocityControl):
@@ -87,12 +83,26 @@ class PVelocitySSTorqueControl(PVelocityControl):
     Gain is computed using LQR. Adjust Q and R to change gain.
     '''
 
+    __slots__ = ("_Q", "_R", "_K")
+
     def __init__(self, motion_model: DifferentialDrive, Q=np.eye(2), R=np.eye(2)) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
-        self.Q = Q
-        self.R = R
+        self._Q = Q
+        self._R = R
         self.compute_gain() # this sets self.K
+
+    @property
+    def Q(self) -> np.ndarray:
+        return self._Q
+
+    @property
+    def R(self) -> np.ndarray:
+        return self._R
+
+    @property
+    def K(self) -> np.ndarray:
+        return self._K
 
     def compute_gain(self):
         # continuous time model params
@@ -106,16 +116,34 @@ class PVelocitySSTorqueControl(PVelocityControl):
         sys_c = ss(A, B, np.eye(2), np.zeros((2,2)))
         sys_d = c2d(sys_c, self._motion_model.sampling_period)
         # this lqr uses A-BK
-        self.K, S, E = lqr(sys_d, self.Q, self.R)
-        self.K = np.array(self.K)
+        self._K, S, E = lqr(sys_d, self._Q, self._R)
+        self._K = np.array(self._K)
         
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
         v_w_ref = super().control(curr_state, goal_pos)
-        v_w_ref = np.array([v_w_ref["v"], v_w_ref["w"]])
+
+        v = v_w_ref["v"]
+        w = v_w_ref["w"]
+
+        if not (v == 0 and w == 0):
+            # adjust reference according to max rpm constraints
+            phi_r = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) + 
+                        w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
+            phi_l = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) -
+                        w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
+            phi = np.array([phi_r, phi_l])
+            phi_clip = np.clip(phi, -self._motion_model.parameters["phi max"], self._motion_model.parameters["phi max"])
+            ratio = phi_clip / phi
+            min_ratio = np.nanmin(ratio)
+
+            v = v * min_ratio
+            w = w * min_ratio
+
+        v_w_ref = np.array([v,w])
         curr_v = self._motion_model.state_2_velocity(curr_state)
         curr_w = self._motion_model.state_2_yaw_rate(curr_state)
         # K was computed using A-BK
-        T = -self.K @ (np.array([curr_v, curr_w] - v_w_ref))
+        T = -self._K @ (np.array([curr_v, curr_w] - v_w_ref))
         return self._motion_model.create_torque_dict(T_R=T[0], T_L=T[1])
 
 
@@ -205,7 +233,7 @@ if __name__ == "__main__":
     goal_pos = np.array([60,60])
 
     states = [curr_state]
-    for i in range(1000):
+    for i in range(100):
         input_torque = C.control(curr_state, goal_pos)
         curr_state = M.step(curr_state, input_torque)
         states.append(curr_state)

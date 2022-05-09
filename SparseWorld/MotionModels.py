@@ -18,11 +18,16 @@ class MotionModel(ABC):
     '''
     Defines MotionModel interface
     '''
-    def __init__(self, sampling_period=1) -> None:
+
+    __slots__ = ("_tau", "_parameters", "_state_dim", "_input_dim")
+
+    def __init__(self, sampling_period=1, parameters_dict=None) -> None:
         self._tau = sampling_period
         self._parameters = {}
         self._state_dim = 0
         self._input_dim = 0
+        if parameters_dict is not None:
+            self._parameters.update(parameters_dict)
 
     @property
     def sampling_period(self):
@@ -78,13 +83,13 @@ class DifferentialDriveVelocityInput(MotionModel):
         v: speed in the direction of heading
         w: yaw rate (rate of change of heading)
     '''
-    def __init__(self, sampling_period=1, paremeters_dict=None) -> None:
-        super().__init__(sampling_period)
+
+    __slots__ = ()
+
+    def __init__(self, sampling_period=1, parameters_dict=None) -> None:
+        super().__init__(sampling_period, parameters_dict)
         self._state_dim = 3
         self._input_dim = 2
-        self._parameters = {}
-        if paremeters_dict is not None:
-            self._parameters.update(paremeters_dict)
 
     def create_velocities_dict(self, v=0, w=0) -> dict:
         return {"v": v, "w": w}
@@ -173,8 +178,10 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
         wheel friction: [0,1): controls how much the wheel velocity decays due to friction
     '''
 
-    def __init__(self, sampling_period=1, paremeters_dict=None) -> None:
-        super().__init__(sampling_period)
+    __slots__ = ()
+
+    def __init__(self, sampling_period=1, parameters_dict=None) -> None:
+        super().__init__(sampling_period, parameters_dict)
         self._state_dim = 5
         self._input_dim = 2
         self._parameters = {
@@ -185,8 +192,6 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
             "max wheel rpm": 60,
             "max motor torque": 100
         }
-        if paremeters_dict is not None:
-            self._parameters.update(paremeters_dict)
         self._parameters["inertia"] = self._parameters["robot mass"] / 2 * self._parameters["wheel radius"]**2
         self._parameters["phi max"] = self._parameters["max wheel rpm"] / 60 * 2 * np.pi
 

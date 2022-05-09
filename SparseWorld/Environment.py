@@ -32,27 +32,34 @@ For LIDAR scan results.
 ScanResult = namedtuple("ScanResult", ["angle", "range"])
 
 class Environment():
+
+    __slots__ = ("_env_size", "_motion_model", "_agent_state", "_obstacles")
+
     def __init__(self, env_size=(100,100), motion_model: MotionModel = None) -> None:
-        self.env_size = env_size
+        self._env_size = env_size
         self._motion_model : MotionModel = motion_model
         self._agent_state = np.zeros((self._motion_model.state_dim))
         self.agent_position = np.array([env_size[0]/2, env_size[1]/2])
         self._obstacles : List[Obstacle] = []
 
-    def add_obstacle(self, obs: Obstacle) -> bool:
-        if obs.left >= 0 and obs.right <= self.env_size[0] and obs.bottom >= 0 and obs.top <= self.env_size[1]:
-            self._obstacles.append(obs)
-            return True
-        else:
-            return False
+    @property
+    def env_size(self) -> tuple:
+        return self._env_size
 
     @property
     def motion_model(self) -> MotionModel:
         return self._motion_model
 
     @property
-    def Obstacles(self) -> List[Obstacle]:
+    def obstacles(self) -> List[Obstacle]:
         return self._obstacles
+    
+    def add_obstacle(self, obs: Obstacle) -> bool:
+        if obs.left >= 0 and obs.right <= self._env_size[0] and obs.bottom >= 0 and obs.top <= self._env_size[1]:
+            self._obstacles.append(obs)
+            return True
+        else:
+            return False
 
     @property
     def agent_state(self) -> np.ndarray:
@@ -103,7 +110,7 @@ class Environment():
             return False
 
     def position_out_of_bounds(self, pos: np.ndarray) -> bool:
-        return pos[0] < 0 or pos[0] > self.env_size[0] or pos[1] < 0 or pos[1] > self.env_size[1]
+        return pos[0] < 0 or pos[0] > self._env_size[0] or pos[1] < 0 or pos[1] > self._env_size[1]
 
     def state_out_of_bounds(self, state: np.ndarray) -> bool:
         pos = self._motion_model.state_2_position(state)
