@@ -83,9 +83,12 @@ class DifferentialDriveVelocityInput(MotionModel):
         x: x coordinate
         y: y coordinate
         theta: heading
+
     Input is defined as [v,w]:
         v: speed in the direction of heading
         w: yaw rate (rate of change of heading)
+
+    Use create_velocities_dict(v,w) for input formatting.
     '''
 
     __slots__ = ()
@@ -175,9 +178,12 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
         theta: heading
         phi_R: angular velocity of right wheel
         phi_L: angular velocity of left wheel
+
     Input is defined as [T_R,T_L]:
         T_R: torque on right wheel
         T_L: torque on left wheel
+
+    Use create_torque_dict(T_R,T_L) for input formatting.
 
     Parameters are:
         wheel radius

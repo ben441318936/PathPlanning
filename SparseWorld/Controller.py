@@ -99,7 +99,7 @@ class PVelocitySSTorqueControl(PVelocityControl):
 
     Control law is based on the state space model from torque to velocity.
 
-    Gain is computed using LQR. Adjust Q and R to change gain.
+    Gain is computed using LQR. Q is weight on state, R is weight on input.
     '''
 
     __slots__ = ("_Q", "_R", "_K", "_max_torque")

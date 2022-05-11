@@ -48,6 +48,9 @@ class Estimator(ABC):
 class WheelSpeedEstimator(Estimator):
     '''
     Stationary Kalman Filter for the wheel speeds using torque and encoder reading.
+
+    QN is covaraince of input noise.
+    RN is covariance of output noise.
     '''
 
     __slots__ = ("_phi", "_L", "_QN", "_RN")
@@ -110,40 +113,54 @@ if __name__ == "__main__":
     C = PVelocitySSTorqueControl(M)
 
     # create estimator
-    E = WheelSpeedEstimator(M)
+    E = WheelSpeedEstimator(M,RN=0.1*np.eye(2),QN=0.01*np.eye(2))
     curr_state = np.array([50,50,0,0,0])
-    E.init_estimator(curr_state[3:5])
+    E.init_estimator(M.state_2_wheel_speed(curr_state))
 
-    goal_pos = np.array([60,60])
+    goal_pos = np.array([55,55])
 
-    real_speeds = [curr_state[3:5]]
-    estimated_speeds = [curr_state[3:5]]
+    real_speeds = [M.state_2_wheel_speed(curr_state)]
+    estimated_speeds = [M.state_2_wheel_speed(curr_state)]
+    error = [np.array([0,0])]
 
     for i in range(10000):
         input_torque = C.control(curr_state, goal_pos)
-        curr_state = M.step(curr_state, input_torque)
-        real_speeds.append(curr_state[3:5])
+
+        input_torque_noise = input_torque.copy()
+        input_torque_noise["T_R"] += np.sqrt(0.1)*np.random.randn()
+        input_torque_noise["T_L"] += np.sqrt(0.1)*np.random.randn()
+        curr_state = M.step(curr_state, input_torque_noise)
+        real_speeds.append(M.state_2_wheel_speed(curr_state))
 
         E.predict(input_torque)
-        E.update(curr_state[3:5])
+        E.update(M.state_2_wheel_speed(curr_state) + np.sqrt(0.01)*np.random.randn(2))
         estimated_speeds.append(E.estimate)
+
+        error.append(real_speeds[-1] - estimated_speeds[-1])
 
     real_speeds = np.array(real_speeds)
     estimated_speeds = np.array(estimated_speeds)
+    error = np.array(error)
 
     plt.figure()
-    plt.subplot(2,2,1)
+    plt.subplot(3,2,1)
     plt.plot(real_speeds[:,0])
     plt.ylabel("phi_R")
-    plt.subplot(2,2,2)
+    plt.subplot(3,2,2)
     plt.plot(real_speeds[:,1])
     plt.ylabel("phi_L")
-    plt.subplot(2,2,3)
+    plt.subplot(3,2,3)
     plt.plot(estimated_speeds[:,0])
     plt.ylabel("e_phi_R")
-    plt.subplot(2,2,4)
+    plt.subplot(3,2,4)
     plt.plot(estimated_speeds[:,1])
     plt.ylabel("e_phi_L")
+    plt.subplot(3,2,5)
+    plt.plot(error[:,0])
+    plt.ylabel("err_phi_R")
+    plt.subplot(3,2,6)
+    plt.plot(error[:,1])
+    plt.ylabel("err_phi_L")
     plt.tight_layout(pad=2)
     plt.show()
 
