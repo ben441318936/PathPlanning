@@ -90,7 +90,7 @@ class Simulation(object):
             if not self._env.agent_take_step(input=input_torque):
                 print("Can't take step")
                 break
-            # print(self.env.agent_state)
+            print(self.env.agent_state)
             # render
             if self._render:
                 self.render_frame()
@@ -210,7 +210,7 @@ if __name__ == "__main__":
 
     C = PVelocitySSTorqueControl(M, Q=np.diag(np.array([1000,2000])))
 
-    S = Simulation(E, C, goal=np.array([10,20]), render=True, window_size=(1050, 550), FPS=100, render_offset=Offset(50,0,0,0), center_col_width=50)
+    S = Simulation(E, C, goal=np.array([10,40]), render=True, window_size=(1050, 550), FPS=100, render_offset=Offset(50,0,0,0), center_col_width=50)
 
     S.render_frame()
 
