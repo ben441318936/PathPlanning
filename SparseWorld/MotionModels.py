@@ -220,28 +220,6 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
         new_pos_head = super().step(state[:,0:3], self.create_velocities_dict(v=v, w=w))
         new_pos_head = new_pos_head.reshape((-1,3))
 
-        # input_torque = np.vstack((input_dict["T_R"], input_dict["T_L"]))
-        
-        # input_torque = input_torque.reshape((-1,2))
-        # input_torque = np.clip(input_torque, -self._parameters["max motor torque"], self._parameters["max motor torque"])
-        
-        # a = input_torque / self._parameters["inertia"]
-        
-        # phi_decay = np.exp(-self._parameters["wheel friction"] * self.sampling_period)
-        # state_decay = np.array([1,1,1,phi_decay,phi_decay]).reshape((-1,self._state_dim))
-
-        # new_state = state_decay * state + self._tau * np.vstack((v * np.cos(state[:,2]),
-        #                                                          v * np.sin(state[:,2]),
-        #                                                          w,
-        #                                                          a[:,0],
-        #                                                          a[:,1])).T
-
-        # new_state[:,3:5] = np.clip(new_state[:,3:5], -self._parameters["phi max"], self._parameters["phi max"])
-
-        # new_pos_head = state[:,0:3] +  self._tau * np.vstack((v * np.cos(state[:,2]),
-        #                                                       v * np.sin(state[:,2]),
-        #                                                       w)).T
-
         new_phis = self.torque_to_phi_step(state, input_dict)
         new_phis = new_phis.reshape((-1, 2))
 

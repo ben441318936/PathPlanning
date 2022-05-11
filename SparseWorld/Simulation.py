@@ -90,7 +90,7 @@ class Simulation(object):
             if not self._env.agent_take_step(input=input_torque):
                 print("Can't take step")
                 break
-            print(self.env.agent_state)
+            # print(self.env.agent_state)
             # render
             if self._render:
                 self.render_frame()
