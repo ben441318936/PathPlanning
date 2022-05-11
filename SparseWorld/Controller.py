@@ -41,11 +41,13 @@ class PVelocityControl(Controller):
     Yaw rate is proportional to heading error.
     '''
     
-    __slots__ = ()
+    __slots__ = ("_max_rpm", "_max_phi")
 
-    def __init__(self, motion_model: DifferentialDriveVelocityInput) -> None:
+    def __init__(self, motion_model: DifferentialDriveVelocityInput, max_rpm: float = 60) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
+        self._max_rpm = max_rpm
+        self._max_phi = self._max_rpm / 60 * 2 * np.pi
 
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
         curr_pos = self._motion_model.state_2_position(curr_state)
@@ -82,7 +84,7 @@ class PVelocityControl(Controller):
             phi_l = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) -
                         w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
             phi = np.array([phi_r, phi_l])
-            phi_clip = np.clip(phi, -self._motion_model.parameters["phi max"], self._motion_model.parameters["phi max"])
+            phi_clip = np.clip(phi, -self._max_phi, self._max_phi)
             ratio = phi_clip / phi
             min_ratio = np.nanmin(ratio)
 
@@ -100,14 +102,15 @@ class PVelocitySSTorqueControl(PVelocityControl):
     Gain is computed using LQR. Adjust Q and R to change gain.
     '''
 
-    __slots__ = ("_Q", "_R", "_K")
+    __slots__ = ("_Q", "_R", "_K", "_max_torque")
 
-    def __init__(self, motion_model: DifferentialDrive, Q=np.eye(2), R=np.eye(2)) -> None:
+    def __init__(self, motion_model: DifferentialDrive, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
         self._Q = Q
         self._R = R
-        self.compute_gain() # this sets self.K
+        self._max_torque = max_torque
+        self.compute_gain() # this sets self._K, the feedback control gain
 
     @property
     def Q(self) -> np.ndarray:
@@ -143,7 +146,7 @@ class PVelocitySSTorqueControl(PVelocityControl):
         curr_w = self._motion_model.state_2_yaw_rate(curr_state)
         # K was computed using A-BK
         T = -self._K @ (np.array([curr_v, curr_w] - v_w_ref))
-        T = np.clip(T, -self._motion_model.parameters["max motor torque"], self._motion_model.parameters["max motor torque"])
+        T = np.clip(T, -self._max_torque, self._max_torque)
         return self._motion_model.create_torque_dict(T_R=T[0], T_L=T[1])
 
 
