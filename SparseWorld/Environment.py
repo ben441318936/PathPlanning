@@ -101,6 +101,10 @@ class Environment():
     def agent_velocity(self) -> float:
         return self._motion_model.state_2_velocity(self._agent_state)
 
+    @property
+    def agent_wheel_speed(self) -> np.ndarray:
+        return self._motion_model.state_2_wheel_speed(self._agent_state)
+
     def agent_take_step(self, input) -> bool:
         new_state = self._motion_model.step(self._agent_state, input)
         if not self.state_out_of_bounds(new_state) and not self.state_in_obstacles(new_state):

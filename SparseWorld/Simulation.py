@@ -10,6 +10,7 @@ from functools import partial
 from MotionModels import DifferentialDrive, DifferentialDriveVelocityInput
 from Environment import Environment, Obstacle
 from Controller import Controller, PVelocityControl, PVelocitySSTorqueControl
+from Estimator import Estimator, WheelSpeedEstimator
 
 import pygame
 pygame.init()
@@ -18,10 +19,13 @@ Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
 
 class Simulation(object):
 
-    __slots__ = ("_render", "_window_size", "_FPS", "_render_offset", "_center_col_width", "_env", "_goal", "_controller", 
-                    "_clock", "_screen", "_color_dict")
+    __slots__ = ("_render", "_window_size", "_FPS", "_render_offset", "_center_col_width", 
+                 "_env", "_goal", "_controller", "_estimator", "_input_noise_var", "_encoder_noise_var",
+                 "_clock", "_screen", "_color_dict")
 
-    def __init__(self, env: Environment, controller: Controller, goal: np.ndarray=None, render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
+    def __init__(self, env: Environment = None, controller: Controller = None, estimator: Estimator = None,
+                 input_noise_var: np.ndarray=None, encoder_noise_var: np.ndarray=None,
+                 goal: np.ndarray=None, render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
         self._render = render
         self._window_size = window_size
         self._FPS = FPS
@@ -30,6 +34,9 @@ class Simulation(object):
         self._env : Environment = env
         self._goal : np.ndarray = goal
         self._controller : Controller = controller
+        self._estimator : Estimator = estimator
+        self._input_noise_var : np.ndarray = input_noise_var
+        self._encoder_noise_var : np.ndarray = encoder_noise_var
 
         if render and (window_size is None or FPS is None):
             print("Render set to True, but no render parameters given.")
@@ -81,19 +88,33 @@ class Simulation(object):
         if self._render:
             self.render_frame()
             if manual:
-                self.check_render_next()  
+                self.check_render_next()
+
+        # initialize estimator
+        self._estimator.init_estimator(self._env.agent_wheel_speed)
 
         while not self._env.position_out_of_bounds(self._env.agent_position):
-            # input_torque = simple_control(self.env.motion_model, self.env.agent_state, self.goal)
-            input_torque = self._controller.control(self._env.agent_state, self._goal)
-            input_torque["T_R"] += np.sqrt(1)*np.random.randn()
-            input_torque["T_L"] += np.sqrt(1)*np.random.randn()
-            print(input_torque)
-            # input_torque = np.array([-10,10])
-            if not self._env.agent_take_step(input=input_torque):
+            # get state estimate
+            estimated_state = self._env.agent_state
+            estimated_state[self._env.motion_model.wheel_speed_state_idx] = self._estimator.estimate
+            # use state estimate to compute control
+            control_action = self._controller.control(estimated_state, self._goal)
+            # add noise to input
+            input_noise = np.random.multivariate_normal(np.zeros((2,)), self._input_noise_var, size=None)
+            noisy_input = control_action.copy()
+            noisy_input["T_R"] += input_noise[0]
+            noisy_input["T_L"] += input_noise[1]
+            # apply noisy input to actual robot
+            if not self._env.agent_take_step(input=noisy_input):
                 print("Can't take step")
                 break
             # print(self.env.agent_state)
+            # get noisy measurments
+            encoder_obs = self._env.agent_wheel_speed + np.random.multivariate_normal(np.zeros((2,)), self._encoder_noise_var, size=None)
+            # run estimator with new measurements
+            self._estimator.predict(control_action)
+            self._estimator.update(encoder_obs)
+
             # render
             if self._render:
                 self.render_frame()
@@ -203,6 +224,10 @@ class Simulation(object):
 
 
 if __name__ == "__main__":
+
+    input_noise_var = 10*np.eye(2)
+    encoder_noise_var = 0.001*np.eye(2)
+
     M = DifferentialDrive(sampling_period=0.01)
     E = Environment(motion_model=M)
     # E.agent_heading = np.pi/4
@@ -212,8 +237,12 @@ if __name__ == "__main__":
     # E.agent_heading = 2*np.pi
 
     C = PVelocitySSTorqueControl(M, Q=np.diag(np.array([1000,2000])))
+    Est = WheelSpeedEstimator(M, QN=input_noise_var, RN=encoder_noise_var)
 
-    S = Simulation(E, C, goal=np.array([10,40]), render=True, window_size=(1050, 550), FPS=100, render_offset=Offset(50,0,0,0), center_col_width=50)
+    S = Simulation(env=E, controller=C, estimator=Est, 
+                   input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,
+                   goal=np.array([30,30]), 
+                   render=True, window_size=(1050, 550), FPS=100, render_offset=Offset(50,0,0,0), center_col_width=50)
 
     S.render_frame()
 

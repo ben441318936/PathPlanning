@@ -120,14 +120,17 @@ if __name__ == "__main__":
     curr_state = np.array([50,50,0,0,0])
     E.init_estimator(M.state_2_wheel_speed(curr_state))
 
-    goal_pos = np.array([60,60])
+    goal_pos = np.array([55,55])
 
     real_speeds = [M.state_2_wheel_speed(curr_state)]
     estimated_speeds = [M.state_2_wheel_speed(curr_state)]
     error = [np.array([0,0])]
 
     for i in range(10000):
-        input_torque = C.control(curr_state, goal_pos)
+        est_state = curr_state.copy()
+        est_state[3:5] = E.estimate
+
+        input_torque = C.control(est_state, goal_pos)
 
         input_torque_noise = input_torque.copy()
         input_torque_noise["T_R"] += np.sqrt(input_noise_var)*np.random.randn()
@@ -139,6 +142,7 @@ if __name__ == "__main__":
         # estimated_speeds.append(M.state_2_wheel_speed(curr_state) + np.sqrt(0.001)*np.random.randn(2))
 
         # use optimal estimator
+        # under this set up error variance reduces from 0.001 to 0.0001
         E.predict(input_torque)
         E.update(M.state_2_wheel_speed(curr_state) + np.sqrt(output_noise_var)*np.random.randn(2))
         estimated_speeds.append(E.estimate)

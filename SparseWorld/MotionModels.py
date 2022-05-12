@@ -65,6 +65,10 @@ class MotionModel(ABC):
     def state_2_heading(self, state: np.ndarray) -> np.ndarray:
         pass
 
+    @property
+    def wheel_speed_state_idx(self) -> slice:
+        pass
+
     @abstractmethod
     def state_2_wheel_speed(self, state: np.ndarray) -> np.ndarray:
         pass
@@ -137,7 +141,7 @@ class DifferentialDriveVelocityInput(MotionModel):
             return np.squeeze(new_state, axis=0)
 
     @property
-    def position_state_idx(self) -> tuple:
+    def position_state_idx(self) -> slice:
         return slice(0,2,None)
 
     def state_2_position(self, state: np.ndarray) -> np.ndarray:
@@ -159,6 +163,10 @@ class DifferentialDriveVelocityInput(MotionModel):
             return state[:,2]
         else:
             return state[0,2]
+
+    @property
+    def wheel_speed_state_idx(self) -> slice:
+        return None
 
     def state_2_wheel_speed(self, state: np.ndarray) -> np.ndarray:
         return None
@@ -262,6 +270,10 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
             return new_phis
         else:
             return np.squeeze(new_phis, axis=0)
+
+    @property
+    def wheel_speed_state_idx(self) -> slice:
+        return slice(3,5,None)
 
     def state_2_wheel_speed(self, state: np.ndarray) -> np.ndarray:
         state = state.reshape((-1,self._state_dim))
