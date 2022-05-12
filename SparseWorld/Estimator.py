@@ -106,6 +106,9 @@ if __name__ == "__main__":
 
     from Controller import PVelocitySSTorqueControl
 
+    input_noise_var = 1
+    output_noise_var = 0.001
+
     # create motion model
     M = DifferentialDrive(sampling_period=0.01)
 
@@ -113,11 +116,11 @@ if __name__ == "__main__":
     C = PVelocitySSTorqueControl(M)
 
     # create estimator
-    E = WheelSpeedEstimator(M,RN=0.1*np.eye(2),QN=0.01*np.eye(2))
+    E = WheelSpeedEstimator(M,QN=input_noise_var*np.eye(2),RN=output_noise_var*np.eye(2))
     curr_state = np.array([50,50,0,0,0])
     E.init_estimator(M.state_2_wheel_speed(curr_state))
 
-    goal_pos = np.array([55,55])
+    goal_pos = np.array([60,60])
 
     real_speeds = [M.state_2_wheel_speed(curr_state)]
     estimated_speeds = [M.state_2_wheel_speed(curr_state)]
@@ -127,13 +130,17 @@ if __name__ == "__main__":
         input_torque = C.control(curr_state, goal_pos)
 
         input_torque_noise = input_torque.copy()
-        input_torque_noise["T_R"] += np.sqrt(0.1)*np.random.randn()
-        input_torque_noise["T_L"] += np.sqrt(0.1)*np.random.randn()
+        input_torque_noise["T_R"] += np.sqrt(input_noise_var)*np.random.randn()
+        input_torque_noise["T_L"] += np.sqrt(input_noise_var)*np.random.randn()
         curr_state = M.step(curr_state, input_torque_noise)
         real_speeds.append(M.state_2_wheel_speed(curr_state))
 
+        # just use encoder measurements
+        # estimated_speeds.append(M.state_2_wheel_speed(curr_state) + np.sqrt(0.001)*np.random.randn(2))
+
+        # use optimal estimator
         E.predict(input_torque)
-        E.update(M.state_2_wheel_speed(curr_state) + np.sqrt(0.01)*np.random.randn(2))
+        E.update(M.state_2_wheel_speed(curr_state) + np.sqrt(output_noise_var)*np.random.randn(2))
         estimated_speeds.append(E.estimate)
 
         error.append(real_speeds[-1] - estimated_speeds[-1])
@@ -141,6 +148,11 @@ if __name__ == "__main__":
     real_speeds = np.array(real_speeds)
     estimated_speeds = np.array(estimated_speeds)
     error = np.array(error)
+
+    print("mean err right", np.mean(error[:,0]))
+    print("var err right", np.var(error[:,0]))
+    print("mean err left", np.mean(error[:,1]))
+    print("var err left", np.var(error[:,1]))
 
     plt.figure()
     plt.subplot(3,2,1)

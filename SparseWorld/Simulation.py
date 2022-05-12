@@ -86,8 +86,8 @@ class Simulation(object):
         while not self._env.position_out_of_bounds(self._env.agent_position):
             # input_torque = simple_control(self.env.motion_model, self.env.agent_state, self.goal)
             input_torque = self._controller.control(self._env.agent_state, self._goal)
-            input_torque["T_R"] += np.sqrt(0.1)*np.random.randn()
-            input_torque["T_L"] += np.sqrt(0.1)*np.random.randn()
+            input_torque["T_R"] += np.sqrt(1)*np.random.randn()
+            input_torque["T_L"] += np.sqrt(1)*np.random.randn()
             print(input_torque)
             # input_torque = np.array([-10,10])
             if not self._env.agent_take_step(input=input_torque):
