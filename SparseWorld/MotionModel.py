@@ -178,7 +178,7 @@ class DifferentialDriveVelocityInput(MotionModel):
         return None
 
 
-class DifferentialDrive(DifferentialDriveVelocityInput):
+class DifferentialDriveTorqueInput(MotionModel):
     '''
     State is defined as [x,y,theta,phi_R,phi_L]:
         x: x coordinate
@@ -200,18 +200,21 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
         wheel friction: [0,1): controls how much the wheel velocity decays due to friction
     '''
 
-    __slots__ = ()
+    __slots__ = ("_DifferentialDriveVelocityInput")
 
     def __init__(self, sampling_period=1, parameters_dict=None) -> None:
         params = {
             "robot mass": 20,
             "wheel friction": 0.5,
+            "wheel radius": 0.5,
+            "axel length": 1,
         }
         if parameters_dict is not None:
             params.update(parameters_dict)
         super().__init__(sampling_period, params)
         if "inertia" not in self._parameters:
             self._parameters["inertia"] = self._parameters["robot mass"] / 2 * self._parameters["wheel radius"]**2
+        self._DifferentialDriveVelocityInput = DifferentialDriveVelocityInput(sampling_period, self._parameters)
         self._state_dim = 5
         self._input_dim = 2
         
@@ -234,7 +237,9 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
         v = (state[:,3] + state[:,4]) * self._parameters["wheel radius"] / 2
         w = (state[:,3] - state[:,4]) * self._parameters["wheel radius"] / self._parameters["axel length"]
 
-        new_pos_head = super().step(state[:,0:3], self.create_velocities_dict(v=v, w=w))
+        v_w = self._DifferentialDriveVelocityInput.create_velocities_dict(v=v, w=w)
+
+        new_pos_head = self._DifferentialDriveVelocityInput.step(state[:,0:3], v_w)
         new_pos_head = new_pos_head.reshape((-1,3))
 
         new_phis = self.torque_to_phi_step(state[:,3:5], input_dict)
@@ -272,6 +277,30 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
             return np.squeeze(new_phis, axis=0)
 
     @property
+    def position_state_idx(self) -> slice:
+        return slice(0,2,None)
+
+    def state_2_position(self, state: np.ndarray) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+        if N > 1:
+            return state[:,0:2]
+        else:
+            return state[0,0:2]
+
+    @property
+    def heading_state_idx(self) -> tuple:
+        return 2
+
+    def state_2_heading(self, state: np.ndarray) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+        if N > 1:
+            return state[:,2]
+        else:
+            return state[0,2]
+
+    @property
     def wheel_speed_state_idx(self) -> slice:
         return slice(3,5,None)
 
@@ -303,7 +332,7 @@ class DifferentialDrive(DifferentialDriveVelocityInput):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    M = DifferentialDrive(sampling_period=0.1)
+    M = DifferentialDriveTorqueInput(sampling_period=0.1)
     curr_state = np.array([[0,0,0,1,0.5],
                            [0,0,0,1,1]])
     # curr_state = np.array([0,0,0,1,0.5])

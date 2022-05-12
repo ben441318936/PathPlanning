@@ -12,7 +12,7 @@ from typing import List
 
 import numpy as np
 
-from MotionModels import MotionModel, DifferentialDrive
+from MotionModel import MotionModel
 
 '''
 For AABB (Axis-Aligned Bounding-Box) type obstacles.
@@ -196,8 +196,9 @@ class Environment():
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
+    from MotionModel import DifferentialDriveTorqueInput
 
-    M = DifferentialDrive(sampling_period=0.1)
+    M = DifferentialDriveTorqueInput(sampling_period=0.1)
     E = Environment(motion_model=M)
 
     E.agent_heading = np.pi/4

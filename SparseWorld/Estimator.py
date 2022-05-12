@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import control
 
-from MotionModels import MotionModel, DifferentialDrive, DifferentialDriveVelocityInput
+from MotionModel import MotionModel, DifferentialDrive, DifferentialDriveVelocityInput
 
 class Estimator(ABC):
     '''
@@ -43,7 +43,7 @@ class Estimator(ABC):
     # extract the most probable state for control use
     @property
     def estimate(self) -> np.ndarray:
-        pass
+        return self._estimate_state
 
 class WheelSpeedEstimator(Estimator):
     '''
@@ -95,16 +95,47 @@ class WheelSpeedEstimator(Estimator):
     def update(self, observation) -> None:
         self._estimate_state = self._estimate_state + self._L @ (observation - self._estimate_state)
 
-    @property
-    def estimate(self) -> np.ndarray:
-        return self._estimate_state
+class ParticleKalmanEstimator(Estimator):
+    '''
+    Particle Filter with LIDAR measurements for position and heading estimation.
 
+    Includes a stionary Kalman Filter for wheel speed estimation.
+    Implemented as a WheelSpeedEstimator object.
+
+    QN is covaraince of input torque noise.
+    RN is covariance of wheel encoder noise.
+    '''
+
+    __slots__ = ("_wheel_speed_estimator")
+
+    def __init__(self, motion_model: DifferentialDrive, QN=np.eye(2), RN=np.eye(2)) -> None:
+        super().__init__(motion_model)
+        self._motion_model = motion_model
+        self._wheel_speed_estimator = WheelSpeedEstimator(motion_model, QN=QN, RN=RN)
+        self._wheel_speed_estimator.compute_gain() # this sets observer gain
+        self.init_estimator(np.zeros((motion_model.state_dim)))
+        self._wheel_speed_estimator.init_estimator(np.array([0.0,0.0]))
+
+    def init_estimator(self, init_state: np.ndarray = None) -> None:
+        super().init_estimator(init_state)
+        self._wheel_speed_estimator.init_estimator(init_state[self._motion_model.wheel_speed_state_idx])
+
+    def predict(self, control_input) -> None:
+        # predict wheel speed
+        self._wheel_speed_estimator.predict(control_input)
+        self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
+        self._estimate_state[self._motion_model.wheel_speed_state_idx] = self._wheel_speed_estimator.estimate
+
+    def update(self, observation) -> None:
+        # update wheel speed
+        self._wheel_speed_estimator.update(observation)
+        self._estimate_state[self._motion_model.wheel_speed_state_idx] = self._wheel_speed_estimator.estimate
 
 if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
 
-    from Controller import PVelocitySSTorqueControl
+    from Controller import PVelocitySSTorqueController
 
     input_noise_var = 1
     output_noise_var = 0.001
@@ -113,7 +144,7 @@ if __name__ == "__main__":
     M = DifferentialDrive(sampling_period=0.01)
 
     # create controller
-    C = PVelocitySSTorqueControl(M)
+    C = PVelocitySSTorqueController(M)
 
     # create estimator
     E = WheelSpeedEstimator(M,QN=input_noise_var*np.eye(2),RN=output_noise_var*np.eye(2))

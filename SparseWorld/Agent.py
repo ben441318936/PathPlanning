@@ -9,7 +9,7 @@ Agent is supposed to incoporate planning and control.
 from abc import ABC, abstractmethod
 import numpy as np
 
-from MotionModels import MotionModel
+from MotionModel import MotionModel
 from Controller import Controller
 
 class Agent(ABC):

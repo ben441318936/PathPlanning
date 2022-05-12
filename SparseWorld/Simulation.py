@@ -7,9 +7,9 @@ from time import time
 
 from functools import partial
 
-from MotionModels import DifferentialDrive, DifferentialDriveVelocityInput
+from MotionModel import DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 from Environment import Environment, Obstacle
-from Controller import Controller, PVelocityControl, PVelocitySSTorqueControl
+from Controller import Controller, PVelocityController, PVelocitySSTorqueController
 from Estimator import Estimator, WheelSpeedEstimator
 
 import pygame
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     input_noise_var = 10*np.eye(2)
     encoder_noise_var = 0.001*np.eye(2)
 
-    M = DifferentialDrive(sampling_period=0.01)
+    M = DifferentialDriveTorqueInput(sampling_period=0.01)
     E = Environment(motion_model=M)
     # E.agent_heading = np.pi/4
     # E.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
@@ -236,7 +236,7 @@ if __name__ == "__main__":
 
     # E.agent_heading = 2*np.pi
 
-    C = PVelocitySSTorqueControl(M, Q=np.diag(np.array([1000,2000])))
+    C = PVelocitySSTorqueController(M, Q=np.diag(np.array([1000,2000])))
     Est = WheelSpeedEstimator(M, QN=input_noise_var, RN=encoder_noise_var)
 
     S = Simulation(env=E, controller=C, estimator=Est, 

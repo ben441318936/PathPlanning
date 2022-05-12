@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import control
 
-from MotionModels import MotionModel, DifferentialDrive, DifferentialDriveVelocityInput
+from MotionModel import MotionModel, DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 
 class Controller(ABC):
     '''
@@ -32,7 +32,7 @@ class Controller(ABC):
     def control(self) -> np.ndarray:
         pass
 
-class PVelocityControl(Controller):
+class PVelocityController(Controller):
     '''
     Implements proportional control for linear rate and yaw rate
     using position and heading feedback.
@@ -93,20 +93,24 @@ class PVelocityControl(Controller):
 
         return self._motion_model.create_velocities_dict(v=v, w=w)
 
-class PVelocitySSTorqueControl(PVelocityControl):
+class PVelocitySSTorqueController(Controller):
     '''
     Implements full state feedback torque control based on velocities reference.
 
-    Control law is based on the state space model from torque to velocity.
+    Velocity references are computed using proportional control.
+    Implemented as a PVelocityController object.
+
+    Full state feedback is based on the state space model from torque to velocity.
 
     Gain is computed using LQR. Q is weight on state, R is weight on input.
     '''
 
-    __slots__ = ("_Q", "_R", "_K", "_max_torque")
+    __slots__ = ("_PVelocityController", "_Q", "_R", "_K", "_max_torque")
 
-    def __init__(self, motion_model: DifferentialDrive, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueInput, Q=np.eye(2), R=np.eye(2), max_rpm: float = 60, max_torque: float = 100) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
+        self._PVelocityController = PVelocityController(motion_model, max_rpm)
         self._Q = Q
         self._R = R
         self._max_torque = max_torque
@@ -140,7 +144,7 @@ class PVelocitySSTorqueControl(PVelocityControl):
         self._K = np.array(self._K)
         
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
-        v_w_ref = super().control(curr_state, goal_pos)
+        v_w_ref = self._PVelocityController.control(curr_state, goal_pos)
         v_w_ref = np.array([v_w_ref["v"],v_w_ref["w"]])
         curr_v = self._motion_model.state_2_velocity(curr_state)
         curr_w = self._motion_model.state_2_yaw_rate(curr_state)
@@ -155,7 +159,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     M = DifferentialDriveVelocityInput(sampling_period=0.01)
-    C = PVelocityControl(M)
+    C = PVelocityController(M)
     curr_state = np.array([50,50,0])
     goal_pos = np.array([60,60])
 
