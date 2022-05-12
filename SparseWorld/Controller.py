@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import control
 
-from MotionModel import MotionModel, DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
+from MotionModel import DifferentialDriveTorqueToWheelVelocity, MotionModel, DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 
 class Controller(ABC):
     '''
@@ -34,24 +34,26 @@ class Controller(ABC):
 
 class PVelocityController(Controller):
     '''
-    Implements proportional control for linear rate and yaw rate
-    using position and heading feedback.
+    Implements proportional control for linear velocity and yaw rate
+    using position and heading (pose) feedback.
 
     Velocity is proportional to L2 distance between curr and target position.
     Yaw rate is proportional to heading error.
     '''
     
-    __slots__ = ("_max_rpm", "_max_phi")
+    __slots__ = ("_max_rpm", "_max_phi", "_KP_V", "_KP_W")
 
-    def __init__(self, motion_model: DifferentialDriveVelocityInput, max_rpm: float = 60) -> None:
+    def __init__(self, motion_model: DifferentialDriveVelocityInput, KP_V: float = 4, KP_W: float = 100, max_rpm: float = 60) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
         self._max_rpm = max_rpm
         self._max_phi = self._max_rpm / 60 * 2 * np.pi
+        self._KP_V = KP_V
+        self._KP_W = KP_W
 
-    def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
-        curr_pos = self._motion_model.state_2_position(curr_state)
-        curr_heading = self._motion_model.state_2_heading(curr_state)
+    def control(self, curr_pose: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
+        curr_pos = self._motion_model.state_2_position(curr_pose)
+        curr_heading = self._motion_model.state_2_heading(curr_pose)
         curr_heading = np.arctan2(np.sin(curr_heading), np.cos(curr_heading))
         goal_heading = np.arctan2(goal_pos[1] - curr_pos[1], goal_pos[0] - curr_pos[0])
 
@@ -59,13 +61,8 @@ class PVelocityController(Controller):
         pos_error = np.linalg.norm(goal_pos - curr_pos)
         # if close enough, don't move
         if pos_error < 0.5:
-            return self._motion_model.create_velocities_dict(v=0, w=0)
+            return self._motion_model.create_velocity_dict(v=0, w=0)
         heading_error = np.arctan2(np.sin(goal_heading-curr_heading), np.cos(goal_heading-curr_heading))
-
-        KP_V = 4
-        # KP_W max is 100, because the max heading error is 180 deg
-        # this corresponds to turning 180 degs in one timestep at max error
-        KP_W = 100
 
         # ensure that the robot is moving as straight as possible
         # this will be needed if planner outputs straight line paths
@@ -73,9 +70,9 @@ class PVelocityController(Controller):
         if np.abs(heading_error) > 0.1:
             v = 0 
         else:
-            v = KP_V * pos_error
+            v = self._KP_V * pos_error
 
-        w = KP_W * heading_error
+        w = self._KP_W * heading_error
 
         if not (v == 0 and w == 0):
             # adjust reference according to max rpm constraints
@@ -91,26 +88,23 @@ class PVelocityController(Controller):
             v = v * min_ratio
             w = w * min_ratio
 
-        return self._motion_model.create_velocities_dict(v=v, w=w)
+        return self._motion_model.create_velocity_dict(v=v, w=w)
 
-class PVelocitySSTorqueController(Controller):
+
+class SSTorqueController(Controller):
     '''
     Implements full state feedback torque control based on velocities reference.
-
-    Velocity references are computed using proportional control.
-    Implemented as a PVelocityController object.
 
     Full state feedback is based on the state space model from torque to velocity.
 
     Gain is computed using LQR. Q is weight on state, R is weight on input.
     '''
 
-    __slots__ = ("_PVelocityController", "_Q", "_R", "_K", "_max_torque")
+    __slots__ = ("_Q", "_R", "_K", "_max_torque")
 
-    def __init__(self, motion_model: DifferentialDriveTorqueInput, Q=np.eye(2), R=np.eye(2), max_rpm: float = 60, max_torque: float = 100) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueToWheelVelocity, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
-        self._PVelocityController = PVelocityController(motion_model, max_rpm)
         self._Q = Q
         self._R = R
         self._max_torque = max_torque
@@ -143,15 +137,53 @@ class PVelocitySSTorqueController(Controller):
         self._K, S, E = control.lqr(sys_d, self._Q, self._R)
         self._K = np.array(self._K)
         
-    def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
-        v_w_ref = self._PVelocityController.control(curr_state, goal_pos)
-        v_w_ref = np.array([v_w_ref["v"],v_w_ref["w"]])
-        curr_v = self._motion_model.state_2_velocity(curr_state)
-        curr_w = self._motion_model.state_2_yaw_rate(curr_state)
+    def control(self, curr_velocity: np.ndarray, goal_velocity: np.ndarray) -> np.ndarray:
+        '''
+        Goal velocity is formatted as [v,w]
+        '''
         # K was computed using A-BK
-        T = -self._K @ (np.array([curr_v, curr_w] - v_w_ref))
+        T = -self._K @ (curr_velocity - goal_velocity)
         T = np.clip(T, -self._max_torque, self._max_torque)
         return self._motion_model.create_torque_dict(T_R=T[0], T_L=T[1])
+
+
+class PVelocitySSTorqueController(Controller):
+    '''
+    Implements full state feedback torque control based on velocities reference.
+
+    Velocity references are computed using proportional control.
+    Implemented as a PVelocityController object.
+
+    Full state feedback is based on the state space model from torque to velocity.
+
+    Gain is computed using LQR. Q is weight on state, R is weight on input.
+    '''
+
+    __slots__ = ("_velocity_to_pose_controller", "_torque_to_velocity_controller")
+
+    def __init__(self, motion_model: DifferentialDriveTorqueInput, KP_V: float = 4, KP_W: float = 100, max_rpm: float = 60, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
+        super().__init__(motion_model)
+        self._motion_model = motion_model
+        self._velocity_to_pose_controller = PVelocityController(motion_model.velocity_input_submodel, KP_V=KP_V, KP_W=KP_W, max_rpm=max_rpm)
+        self._torque_to_velocity_controller = SSTorqueController(motion_model.torque_to_velocity_submodel, Q=Q, R=R, max_torque=max_torque)
+
+    @property
+    def Q(self) -> np.ndarray:
+        return self._Q
+
+    @property
+    def R(self) -> np.ndarray:
+        return self._R
+
+    @property
+    def K(self) -> np.ndarray:
+        return self._K
+        
+    def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
+        v_w_ref = self._velocity_to_pose_controller.control(self._motion_model.state_2_pose(curr_state), goal_pos)
+        v_w_ref = np.array([v_w_ref["v"], v_w_ref["w"]])
+        curr_v_w = np.array([self._motion_model.state_2_velocity(curr_state), self._motion_model.state_2_yaw_rate(curr_state)])
+        return self._torque_to_velocity_controller.control(curr_v_w, v_w_ref)
 
 
 if __name__ == "__main__":

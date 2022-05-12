@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import control
 
-from MotionModel import MotionModel, DifferentialDrive, DifferentialDriveVelocityInput
+from MotionModel import DifferentialDriveTorqueToWheelVelocity, MotionModel, DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 
 class Estimator(ABC):
     '''
@@ -27,8 +27,9 @@ class Estimator(ABC):
     # initialize the estimator
     def init_estimator(self, init_state: np.ndarray = None) -> None:
         if init_state is None:
-            init_state = np.zeros((self._motion_model.state_dim, self._motion_model.state_dim))
-        self._estimate_state = init_state
+            self._estimate_state = np.zeros((self._motion_model.state_dim))
+        else:
+            self._estimate_state = init_state
 
     # predict the next state using known input and motion model
     @abstractmethod
@@ -45,9 +46,9 @@ class Estimator(ABC):
     def estimate(self) -> np.ndarray:
         return self._estimate_state
 
-class WheelSpeedEstimator(Estimator):
+class WheelVelocityEstimator(Estimator):
     '''
-    Stationary Kalman Filter for the wheel speeds using torque and encoder reading.
+    Stationary Kalman Filter for the wheel velocity using torque and encoder reading.
 
     QN is covaraince of input noise.
     RN is covariance of output noise.
@@ -55,13 +56,13 @@ class WheelSpeedEstimator(Estimator):
 
     __slots__ = ("_phi", "_L", "_QN", "_RN")
 
-    def __init__(self, motion_model: DifferentialDrive, QN=np.eye(2), RN=np.eye(2)) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueToWheelVelocity, QN=np.eye(2), RN=np.eye(2)) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
         self._QN = QN
         self._RN = RN
         self.compute_gain() # this sets self._L, the estimator gain
-        self.init_estimator(np.array([0.0,0.0]))
+        self.init_estimator(None)
 
     @property
     def QN(self) -> np.ndarray:
@@ -90,7 +91,7 @@ class WheelSpeedEstimator(Estimator):
         self._L = np.array(self._L)
 
     def predict(self, control_input) -> None:
-        self._estimate_state = self._motion_model.torque_to_phi_step(self._estimate_state, control_input)
+        self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
 
     def update(self, observation) -> None:
         self._estimate_state = self._estimate_state + self._L @ (observation - self._estimate_state)
@@ -106,30 +107,33 @@ class ParticleKalmanEstimator(Estimator):
     RN is covariance of wheel encoder noise.
     '''
 
-    __slots__ = ("_wheel_speed_estimator")
+    __slots__ = ("_wheel_velocity_estimator")
 
-    def __init__(self, motion_model: DifferentialDrive, QN=np.eye(2), RN=np.eye(2)) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueInput, QN=np.eye(2), RN=np.eye(2)) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
-        self._wheel_speed_estimator = WheelSpeedEstimator(motion_model, QN=QN, RN=RN)
-        self._wheel_speed_estimator.compute_gain() # this sets observer gain
-        self.init_estimator(np.zeros((motion_model.state_dim)))
-        self._wheel_speed_estimator.init_estimator(np.array([0.0,0.0]))
+        self._wheel_velocity_estimator = WheelVelocityEstimator(motion_model.torque_to_velocity_submodel, QN=QN, RN=RN)
+        self._wheel_velocity_estimator.compute_gain() # this sets observer gain
+        self.init_estimator(None)
+        self._wheel_velocity_estimator.init_estimator(None)
 
     def init_estimator(self, init_state: np.ndarray = None) -> None:
         super().init_estimator(init_state)
-        self._wheel_speed_estimator.init_estimator(init_state[self._motion_model.wheel_speed_state_idx])
+        if init_state is None:
+            self._wheel_velocity_estimator.init_estimator(None)
+        else:
+            self._wheel_velocity_estimator.init_estimator(self._motion_model.state_2_wheel_velocity(init_state))
 
     def predict(self, control_input) -> None:
         # predict wheel speed
-        self._wheel_speed_estimator.predict(control_input)
+        self._wheel_velocity_estimator.predict(control_input)
         self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
-        self._estimate_state[self._motion_model.wheel_speed_state_idx] = self._wheel_speed_estimator.estimate
+        self._estimate_state[self._motion_model.wheel_velocity_state_idx] = self._wheel_velocity_estimator.estimate
 
     def update(self, observation) -> None:
         # update wheel speed
-        self._wheel_speed_estimator.update(observation)
-        self._estimate_state[self._motion_model.wheel_speed_state_idx] = self._wheel_speed_estimator.estimate
+        self._wheel_velocity_estimator.update(observation)
+        self._estimate_state[self._motion_model.wheel_velocity_state_idx] = self._wheel_velocity_estimator.estimate
 
 if __name__ == "__main__":
 
@@ -137,77 +141,105 @@ if __name__ == "__main__":
 
     from Controller import PVelocitySSTorqueController
 
-    input_noise_var = 1
-    output_noise_var = 0.001
+    input_noise_var = 1*np.eye(2)
+    output_noise_var = 0.001*np.eye(2)
 
     # create motion model
-    M = DifferentialDrive(sampling_period=0.01)
+    M = DifferentialDriveTorqueInput(sampling_period=0.01)
 
     # create controller
     C = PVelocitySSTorqueController(M)
 
     # create estimator
-    E = WheelSpeedEstimator(M,QN=input_noise_var*np.eye(2),RN=output_noise_var*np.eye(2))
+    E = ParticleKalmanEstimator(M, QN=input_noise_var, RN=output_noise_var)
     curr_state = np.array([50,50,0,0,0])
-    E.init_estimator(M.state_2_wheel_speed(curr_state))
+    E.init_estimator(curr_state)
 
     goal_pos = np.array([55,55])
 
-    real_speeds = [M.state_2_wheel_speed(curr_state)]
-    estimated_speeds = [M.state_2_wheel_speed(curr_state)]
-    error = [np.array([0,0])]
+    real_states = [curr_state]
+    estimated_states = [curr_state]
+    errors = [np.zeros((5))]
 
     for i in range(10000):
-        est_state = curr_state.copy()
-        est_state[3:5] = E.estimate
-
-        input_torque = C.control(est_state, goal_pos)
+        input_torque = C.control(E.estimate, goal_pos)
 
         input_torque_noise = input_torque.copy()
-        input_torque_noise["T_R"] += np.sqrt(input_noise_var)*np.random.randn()
-        input_torque_noise["T_L"] += np.sqrt(input_noise_var)*np.random.randn()
+        input_noise = np.random.multivariate_normal(np.zeros((2,)), input_noise_var, size=None)
+        input_torque_noise["T_R"] += input_noise[0]
+        input_torque_noise["T_L"] += input_noise[1]
         curr_state = M.step(curr_state, input_torque_noise)
-        real_speeds.append(M.state_2_wheel_speed(curr_state))
+        real_states.append(curr_state)
 
-        # just use encoder measurements
-        # estimated_speeds.append(M.state_2_wheel_speed(curr_state) + np.sqrt(0.001)*np.random.randn(2))
-
-        # use optimal estimator
-        # under this set up error variance reduces from 0.001 to 0.0001
         E.predict(input_torque)
-        E.update(M.state_2_wheel_speed(curr_state) + np.sqrt(output_noise_var)*np.random.randn(2))
-        estimated_speeds.append(E.estimate)
+        E.update(M.state_2_wheel_velocity(curr_state) + np.random.multivariate_normal(np.zeros((2,)), output_noise_var, size=None))
+        estimated_states.append(E.estimate)
 
-        error.append(real_speeds[-1] - estimated_speeds[-1])
+        errors.append(real_states[-1] - estimated_states[-1])
 
-    real_speeds = np.array(real_speeds)
-    estimated_speeds = np.array(estimated_speeds)
-    error = np.array(error)
+    real_states = np.array(real_states)
+    estimated_states = np.array(estimated_states)
+    errors = np.array(errors)
 
-    print("mean err right", np.mean(error[:,0]))
-    print("var err right", np.var(error[:,0]))
-    print("mean err left", np.mean(error[:,1]))
-    print("var err left", np.var(error[:,1]))
+    print("var err phi R:", np.var(errors[:,3]))
+    print("var err phi L:", np.var(errors[:,4]))
 
     plt.figure()
-    plt.subplot(3,2,1)
-    plt.plot(real_speeds[:,0])
-    plt.ylabel("phi_R")
-    plt.subplot(3,2,2)
-    plt.plot(real_speeds[:,1])
-    plt.ylabel("phi_L")
-    plt.subplot(3,2,3)
-    plt.plot(estimated_speeds[:,0])
-    plt.ylabel("e_phi_R")
-    plt.subplot(3,2,4)
-    plt.plot(estimated_speeds[:,1])
-    plt.ylabel("e_phi_L")
-    plt.subplot(3,2,5)
-    plt.plot(error[:,0])
-    plt.ylabel("err_phi_R")
-    plt.subplot(3,2,6)
-    plt.plot(error[:,1])
-    plt.ylabel("err_phi_L")
+    
+    plt.subplot(5,3,1)
+    plt.plot(real_states[:,0])
+    plt.ylabel("real x")
+    plt.ylim(49,56)
+    plt.subplot(5,3,2)
+    plt.plot(estimated_states[:,0])
+    plt.ylabel("esti x")
+    plt.ylim(49,56)
+    plt.subplot(5,3,3)
+    plt.plot(errors[:,0])
+    plt.ylabel("erro x")
+
+    plt.subplot(5,3,4)
+    plt.plot(real_states[:,1])
+    plt.ylabel("real y")
+    plt.ylim(49,56)
+    plt.subplot(5,3,5)
+    plt.plot(estimated_states[:,1])
+    plt.ylabel("esti y")
+    plt.ylim(49,56)
+    plt.subplot(5,3,6)
+    plt.plot(errors[:,1])
+    plt.ylabel("erro y")
+
+    plt.subplot(5,3,7)
+    plt.plot(real_states[:,2])
+    plt.ylabel("real theta")
+    plt.subplot(5,3,8)
+    plt.plot(estimated_states[:,2])
+    plt.ylabel("esti theta")
+    plt.subplot(5,3,9)
+    plt.plot(errors[:,2])
+    plt.ylabel("erro theta")
+
+    plt.subplot(5,3,10)
+    plt.plot(real_states[:,3])
+    plt.ylabel("real phi R")
+    plt.subplot(5,3,11)
+    plt.plot(estimated_states[:,3])
+    plt.ylabel("esti phi R")
+    plt.subplot(5,3,12)
+    plt.plot(errors[:,3])
+    plt.ylabel("erro phi R")
+
+    plt.subplot(5,3,13)
+    plt.plot(real_states[:,4])
+    plt.ylabel("real phi L")
+    plt.subplot(5,3,14)
+    plt.plot(estimated_states[:,4])
+    plt.ylabel("esti phi L")
+    plt.subplot(5,3,15)
+    plt.plot(errors[:,4])
+    plt.ylabel("erro phi L")
+
     plt.tight_layout(pad=2)
     plt.show()
 

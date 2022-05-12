@@ -65,12 +65,16 @@ class MotionModel(ABC):
     def state_2_heading(self, state: np.ndarray) -> np.ndarray:
         pass
 
+    @abstractmethod
+    def state_2_pose(self, state: np.ndarray) -> np.ndarray:
+        pass
+
     @property
-    def wheel_speed_state_idx(self) -> slice:
+    def wheel_velocity_state_idx(self) -> slice:
         pass
 
     @abstractmethod
-    def state_2_wheel_speed(self, state: np.ndarray) -> np.ndarray:
+    def state_2_wheel_velocity(self, state: np.ndarray) -> np.ndarray:
         pass
     
     @abstractmethod
@@ -108,7 +112,7 @@ class DifferentialDriveVelocityInput(MotionModel):
         self._state_dim = 3
         self._input_dim = 2
 
-    def create_velocities_dict(self, v=0.0, w=0.0) -> dict:
+    def create_velocity_dict(self, v=0.0, w=0.0) -> dict:
         return {"v": v, "w": w}
 
     def step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
@@ -125,9 +129,9 @@ class DifferentialDriveVelocityInput(MotionModel):
 
         input_velocities = np.vstack((input_dict["v"], input_dict["w"]))
 
-        state = state.reshape((-1,3))
+        state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
-        input_velocities = input_velocities.reshape((-1,2))
+        input_velocities = input_velocities.reshape((-1,self._input_dim))
 
         v = input_velocities[:,0]
         w = input_velocities[:,1]
@@ -164,11 +168,19 @@ class DifferentialDriveVelocityInput(MotionModel):
         else:
             return state[0,2]
 
+    def state_2_pose(self, state: np.ndarray) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+        if N > 1:
+            return state[:,0:3]
+        else:
+            return state[0,0:3]
+
     @property
-    def wheel_speed_state_idx(self) -> slice:
+    def wheel_velocity_state_idx(self) -> slice:
         return None
 
-    def state_2_wheel_speed(self, state: np.ndarray) -> np.ndarray:
+    def state_2_wheel_velocity(self, state: np.ndarray) -> np.ndarray:
         return None
     
     def state_2_yaw_rate(self, state: np.ndarray) -> np.ndarray:
@@ -176,6 +188,114 @@ class DifferentialDriveVelocityInput(MotionModel):
 
     def state_2_velocity(self, state: np.ndarray) -> np.ndarray:
         return None
+
+class DifferentialDriveTorqueToWheelVelocity(MotionModel):
+    '''
+    State is defined as [phi_R,phi_L]:
+        phi_R: angular velocity of right wheel
+        phi_L: angular velocity of left wheel
+
+    Input is defined as [T_R,T_L]:
+        T_R: torque on right wheel
+        T_L: torque on left wheel
+
+    Use create_torque_dict(T_R,T_L) for input formatting.
+
+    Parameters are:
+        wheel radius
+        robot mass: includes body and both wheels
+        wheel friction: [0,1): controls how much the wheel velocity decays due to friction
+        axel length
+    '''
+
+    __slots__ = ()
+
+    def __init__(self, sampling_period=1, parameters_dict=None) -> None:
+        params = {
+            "robot mass": 20,
+            "wheel friction": 0.5,
+            "wheel radius": 0.5,
+            "axel length": 1,
+        }
+        if parameters_dict is not None:
+            params.update(parameters_dict)
+        super().__init__(sampling_period, params)
+        if "inertia" not in self._parameters:
+            self._parameters["inertia"] = self._parameters["robot mass"] / 2 * self._parameters["wheel radius"]**2
+        self._state_dim = 2
+        self._input_dim = 2
+
+    def create_torque_dict(self, T_R=0.0, T_L=0.0) -> dict:
+        return {"T_R": T_R, "T_L": T_L}
+
+    def step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+
+        input_torque = np.vstack((input_dict["T_R"], input_dict["T_L"]))
+        
+        input_torque = input_torque.reshape((-1,self._input_dim))
+        # input_torque = np.clip(input_torque, -self._parameters["max motor torque"], self._parameters["max motor torque"])
+        
+        a = input_torque / self._parameters["inertia"]
+        
+        phi_decay = np.exp(-self._parameters["wheel friction"] * self.sampling_period)
+        phis_decay = np.array([phi_decay,phi_decay]).reshape((-1,self._state_dim))
+
+        new_phis = phis_decay * state + self._tau * np.vstack((a[:,0],
+                                                               a[:,1])).T
+
+        # new_phis = np.clip(new_phis, -self._parameters["phi max"], self._parameters["phi max"])
+
+        if N > 1:
+            return new_phis
+        else:
+            return np.squeeze(new_phis, axis=0)
+
+    @property
+    def position_state_idx(self) -> slice:
+        return None
+
+    def state_2_position(self, state: np.ndarray) -> np.ndarray:
+        return None
+
+    @property
+    def heading_state_idx(self) -> tuple:
+        return None
+
+    def state_2_heading(self, state: np.ndarray) -> np.ndarray:
+        return None
+
+    def state_2_pose(self, state: np.ndarray) -> np.ndarray:
+        return None
+
+    @property
+    def wheel_velocity_state_idx(self) -> slice:
+        return slice(0,2,None)
+
+    def state_2_wheel_velocity(self, state: np.ndarray) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+        if N > 1:
+            return state[:,0:2]
+        else:
+            return state[0,0:2]
+    
+    def state_2_yaw_rate(self, state: np.ndarray) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+        if N > 1:
+            return (state[:,0] - state[:,1]) * self._parameters["wheel radius"] / self._parameters["axel length"]
+        else:
+            return (state[0,0] - state[0,2]) * self._parameters["wheel radius"] / self._parameters["axel length"]
+
+    def state_2_velocity(self, state: np.ndarray) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+        if N > 1:
+            return (state[:,0] + state[:,1]) * self._parameters["wheel radius"] / 2
+        else:
+            return (state[0,0] + state[0,1]) * self._parameters["wheel radius"] / 2
 
 
 class DifferentialDriveTorqueInput(MotionModel):
@@ -200,7 +320,7 @@ class DifferentialDriveTorqueInput(MotionModel):
         wheel friction: [0,1): controls how much the wheel velocity decays due to friction
     '''
 
-    __slots__ = ("_DifferentialDriveVelocityInput")
+    __slots__ = ("_velocity_input_submodel", "_torque_to_velocity_submodel")
 
     def __init__(self, sampling_period=1, parameters_dict=None) -> None:
         params = {
@@ -214,12 +334,21 @@ class DifferentialDriveTorqueInput(MotionModel):
         super().__init__(sampling_period, params)
         if "inertia" not in self._parameters:
             self._parameters["inertia"] = self._parameters["robot mass"] / 2 * self._parameters["wheel radius"]**2
-        self._DifferentialDriveVelocityInput = DifferentialDriveVelocityInput(sampling_period, self._parameters)
+        self._velocity_input_submodel = DifferentialDriveVelocityInput(sampling_period, self._parameters)
+        self._torque_to_velocity_submodel = DifferentialDriveTorqueToWheelVelocity(sampling_period, self._parameters)
         self._state_dim = 5
         self._input_dim = 2
+
+    @property
+    def velocity_input_submodel(self) -> DifferentialDriveVelocityInput:
+        return self._velocity_input_submodel
+
+    @property
+    def torque_to_velocity_submodel(self) -> DifferentialDriveTorqueToWheelVelocity:
+        return self._torque_to_velocity_submodel
         
     def create_torque_dict(self, T_R=0.0, T_L=0.0) -> dict:
-        return {"T_R": T_R, "T_L": T_L}
+        return self._torque_to_velocity_submodel.create_torque_dict(T_R=T_R, T_L=T_L)
 
     def step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
         '''
@@ -231,19 +360,21 @@ class DifferentialDriveTorqueInput(MotionModel):
         Inputs [N,2]
         '''
 
-        state = state.reshape((-1,5))
+        state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
 
         v = (state[:,3] + state[:,4]) * self._parameters["wheel radius"] / 2
         w = (state[:,3] - state[:,4]) * self._parameters["wheel radius"] / self._parameters["axel length"]
 
-        v_w = self._DifferentialDriveVelocityInput.create_velocities_dict(v=v, w=w)
+        v_w = self._velocity_input_submodel.create_velocity_dict(v=v, w=w)
 
-        new_pos_head = self._DifferentialDriveVelocityInput.step(state[:,0:3], v_w)
-        new_pos_head = new_pos_head.reshape((-1,3))
+        new_pos_head = self._velocity_input_submodel.step(state[:,0:3], v_w)
+        new_pos_head = new_pos_head.reshape((-1,self._velocity_input_submodel.state_dim))
 
-        new_phis = self.torque_to_phi_step(state[:,3:5], input_dict)
-        new_phis = new_phis.reshape((-1, 2))
+        new_phis = self._torque_to_velocity_submodel.step(state[:,3:5], input_dict)
+
+        # new_phis = self.torque_to_phi_step(state[:,3:5], input_dict)
+        new_phis = new_phis.reshape((-1, self._torque_to_velocity_submodel.state_dim))
 
         new_state = np.hstack((new_pos_head, new_phis))
 
@@ -251,30 +382,6 @@ class DifferentialDriveTorqueInput(MotionModel):
             return new_state
         else:
             return np.squeeze(new_state, axis=0)
-
-    def torque_to_phi_step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
-        state = state.reshape((-1,2))
-        N = state.shape[0]
-
-        input_torque = np.vstack((input_dict["T_R"], input_dict["T_L"]))
-        
-        input_torque = input_torque.reshape((-1,2))
-        # input_torque = np.clip(input_torque, -self._parameters["max motor torque"], self._parameters["max motor torque"])
-        
-        a = input_torque / self._parameters["inertia"]
-        
-        phi_decay = np.exp(-self._parameters["wheel friction"] * self.sampling_period)
-        phis_decay = np.array([phi_decay,phi_decay]).reshape((-1,2))
-
-        new_phis = phis_decay * state + self._tau * np.vstack((a[:,0],
-                                                               a[:,1])).T
-
-        # new_phis = np.clip(new_phis, -self._parameters["phi max"], self._parameters["phi max"])
-
-        if N > 1:
-            return new_phis
-        else:
-            return np.squeeze(new_phis, axis=0)
 
     @property
     def position_state_idx(self) -> slice:
@@ -300,11 +407,19 @@ class DifferentialDriveTorqueInput(MotionModel):
         else:
             return state[0,2]
 
+    def state_2_pose(self, state: np.ndarray) -> np.ndarray:
+        state = state.reshape((-1,self._state_dim))
+        N = state.shape[0]
+        if N > 1:
+            return state[:,0:3]
+        else:
+            return state[0,0:3]
+
     @property
-    def wheel_speed_state_idx(self) -> slice:
+    def wheel_velocity_state_idx(self) -> slice:
         return slice(3,5,None)
 
-    def state_2_wheel_speed(self, state: np.ndarray) -> np.ndarray:
+    def state_2_wheel_velocity(self, state: np.ndarray) -> np.ndarray:
         state = state.reshape((-1,self._state_dim))
         N = state.shape[0]
         if N > 1:
