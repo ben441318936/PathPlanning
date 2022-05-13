@@ -10,7 +10,7 @@ from functools import partial
 from MotionModel import DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 from Environment import Environment, Obstacle
 from Controller import Controller, PVelocityController, PVelocitySSTorqueController
-from Estimator import Estimator, ParticleKalmanEstimator, WheelVelocityEstimator
+from Estimator import Estimator, WheelVelocityEstimator, PoseEstimator, FullStateEstimator
 
 import pygame
 pygame.init()
@@ -104,19 +104,19 @@ class Simulation(object):
             # use state estimate to compute control
             control_action = self._controller.control(estimated_state, self._goal)
             # add noise to input
-            input_noise = np.random.multivariate_normal(np.zeros((2,)), self._input_noise_var, size=None)
+            input_noise = np.random.multivariate_normal(np.zeros((self._input_noise_var.shape[0],)), self._input_noise_var, size=None)
             noisy_input = control_action.copy()
-            noisy_input["T_R"] += input_noise[0]
-            noisy_input["T_L"] += input_noise[1]
+            for (name, i) in zip(self._environment.motion_model.input_names, range(input_noise.shape[0])):
+                noisy_input[name] += input_noise[i]
             # apply noisy input to actual robot
             if not self._environment.agent_take_step(input=noisy_input):
                 print("Can't take step")
                 break
             # get noisy measurments
-            encoder_obs = self._environment.agent_wheel_velocity + np.random.multivariate_normal(np.zeros((2,)), self._encoder_noise_var, size=None)
+            # encoder_obs = self._environment.agent_wheel_velocity + np.random.multivariate_normal(np.zeros((self._encoder_noise_var.shape[0],)), self._encoder_noise_var, size=None)
             # run estimator with new measurements
             self._estimator.predict(control_action)
-            self._estimator.update(encoder_obs)
+            # self._estimator.update(encoder_obs)
 
             # debug monitor
             print("True state:", self._environment.agent_state)
@@ -175,8 +175,6 @@ class Simulation(object):
         scaled_goal = (scale_x(self.goal[0]), scale_y(self.goal[1]))
         pygame.draw.circle(self._screen, self._color_dict["green"], scaled_goal, 3)
 
-
-
     def render_frame(self) -> None:
         if not self._render:
             return
@@ -234,10 +232,12 @@ class Simulation(object):
 
 if __name__ == "__main__":
 
-    input_noise_var = 5*np.eye(2)
+    input_noise_var = np.diag(np.array([0.1,0.01]))
     encoder_noise_var = 0.005*np.eye(2)
 
-    Mot = DifferentialDriveTorqueInput(sampling_period=0.01)
+    # Mot = DifferentialDriveTorqueInput(sampling_period=0.01)
+    Mot = DifferentialDriveVelocityInput(sampling_period=0.01)
+
     Env = Environment(motion_model=Mot)
     # E.agent_heading = np.pi/4
     # E.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
@@ -245,9 +245,12 @@ if __name__ == "__main__":
 
     Env.agent_position = np.array([50,50])
 
-    Con = PVelocitySSTorqueController(Mot, KP_V=4, KP_W=100, max_rpm=60, Q=np.diag(np.array([1000,2000])), max_torque=100)
-    Est = ParticleKalmanEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
+    # Con = PVelocitySSTorqueController(Mot, KP_V=4, KP_W=100, max_rpm=60, Q=np.diag(np.array([1000,2000])), max_torque=100)
+    Con = PVelocityController(Mot)
+
+    # Est = FullStateEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
     # Est = WheelVelocityEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
+    Est = PoseEstimator(Mot, input_noise_var)
 
     Sim = Simulation(environment=Env, controller=Con, estimator=Est, 
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,

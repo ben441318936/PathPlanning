@@ -80,7 +80,7 @@ class Environment():
     @agent_position.setter
     def agent_position(self, position: np.ndarray) -> bool:
         if len(position.shape) == 1 and position.shape[0] == 2:
-            self._agent_state[self._motion_model.position_state_idx] = position
+            self._motion_model.set_position(self._agent_state, position)
             return True
         else:
             return False
@@ -91,7 +91,20 @@ class Environment():
 
     @agent_heading.setter
     def agent_heading(self, heading: float) -> bool:
-        self._agent_state[self._motion_model.heading_state_idx] = heading
+        self._motion_model.set_heading(self._agent_state, heading)
+        return True
+
+    @property
+    def agent_pose(self) -> np.ndarray:
+        self._motion_model.state_2_pose(self._agent_state)
+
+    @agent_pose.setter
+    def agent_pose(self, pose: np.ndarray) -> bool:
+        if len(pose.shape) == 1 and pose.shape[0] == 3:
+            self._motion_model.set_pose(self._agent_state, pose)
+            return True
+        else:
+            return False
 
     @property
     def agent_yaw_rate(self) -> float:

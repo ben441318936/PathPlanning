@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 import control
 
-from MotionModel import DifferentialDriveTorqueToWheelVelocity, MotionModel, DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
+from MotionModel import MotionModel, DifferentialDriveTorqueToVelocity,  DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 
 class Controller(ABC):
     '''
@@ -61,39 +61,40 @@ class PVelocityController(Controller):
         pos_error = np.linalg.norm(goal_pos - curr_pos)
         # if close enough, don't move
         if pos_error < 0.5:
-            return self._motion_model.create_velocity_dict(v=0, w=0)
-        heading_error = np.arctan2(np.sin(goal_heading-curr_heading), np.cos(goal_heading-curr_heading))
-
-        # ensure that the robot is moving as straight as possible
-        # this will be needed if planner outputs straight line paths
-        # make this value large to let the robot move smoothly
-        if np.abs(heading_error) > 0.1:
-            v = 0 
+            v, w = 0.0, 0.0
         else:
-            v = self._KP_V * pos_error
+            heading_error = np.arctan2(np.sin(goal_heading-curr_heading), np.cos(goal_heading-curr_heading))
 
-        w = self._KP_W * heading_error
+            # ensure that the robot is moving as straight as possible
+            # this will be needed if planner outputs straight line paths
+            # make this value large to let the robot move smoothly
+            if np.abs(heading_error) > 0.1:
+                v = 0 
+            else:
+                v = self._KP_V * pos_error
 
-        if not (v == 0 and w == 0):
-            # adjust reference according to max rpm constraints
-            phi_r = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) + 
-                        w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
-            phi_l = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) -
-                        w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
-            phi = np.array([phi_r, phi_l])
-            phi_clip = np.clip(phi, -self._max_phi, self._max_phi)
-            ratio = phi_clip / phi
-            min_ratio = np.nanmin(ratio)
+            w = self._KP_W * heading_error
 
-            v = v * min_ratio
-            w = w * min_ratio
+            if not (v == 0 and w == 0):
+                # adjust reference according to max rpm constraints
+                phi_r = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) + 
+                            w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
+                phi_l = 1/2 * (v / (self._motion_model.parameters["wheel radius"]/2) -
+                            w / (self._motion_model.parameters["wheel radius"] / self._motion_model.parameters["axel length"]))
+                phi = np.array([phi_r, phi_l])
+                phi_clip = np.clip(phi, -self._max_phi, self._max_phi)
+                ratio = phi_clip / phi
+                min_ratio = np.nanmin(ratio)
 
-        return self._motion_model.create_velocity_dict(v=v, w=w)
+                v = v * min_ratio
+                w = w * min_ratio
+
+        return self._motion_model.create_input_dict(v, w)
 
 
 class SSTorqueController(Controller):
     '''
-    Implements full state feedback torque control based on velocities reference.
+    Implements full state feedback torque control based on [v,w] reference.
 
     Full state feedback is based on the state space model from torque to velocity.
 
@@ -102,7 +103,7 @@ class SSTorqueController(Controller):
 
     __slots__ = ("_Q", "_R", "_K", "_max_torque")
 
-    def __init__(self, motion_model: DifferentialDriveTorqueToWheelVelocity, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueToVelocity, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
         self._Q = Q
@@ -144,7 +145,7 @@ class SSTorqueController(Controller):
         # K was computed using A-BK
         T = -self._K @ (curr_velocity - goal_velocity)
         T = np.clip(T, -self._max_torque, self._max_torque)
-        return self._motion_model.create_torque_dict(T_R=T[0], T_L=T[1])
+        return self._motion_model.create_input_dict(T[0],T[1])
 
 
 class PVelocitySSTorqueController(Controller):
@@ -169,15 +170,15 @@ class PVelocitySSTorqueController(Controller):
 
     @property
     def Q(self) -> np.ndarray:
-        return self._Q
+        return self._torque_to_velocity_controller._Q
 
     @property
     def R(self) -> np.ndarray:
-        return self._R
+        return self._torque_to_velocity_controller._R
 
     @property
     def K(self) -> np.ndarray:
-        return self._K
+        return self._torque_to_velocity_controller._K
         
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
         v_w_ref = self._velocity_to_pose_controller.control(self._motion_model.state_2_pose(curr_state), goal_pos)
@@ -186,31 +187,111 @@ class PVelocitySSTorqueController(Controller):
         return self._torque_to_velocity_controller.control(curr_v_w, v_w_ref)
 
 
-if __name__ == "__main__":
-
+def test_torque_to_velocity(init_velocity=np.array([0,0]), goal_velocity=np.array([1,0])):
     import matplotlib.pyplot as plt
 
-    M = DifferentialDriveVelocityInput(sampling_period=0.01)
-    C = PVelocityController(M)
-    curr_state = np.array([50,50,0])
-    goal_pos = np.array([60,60])
+    M = DifferentialDriveTorqueToVelocity(sampling_period=0.01)
+    C = SSTorqueController(M, Q=np.diag(np.array([1000,2000])), max_torque=100)
 
+    curr_state = init_velocity
+    
     states = [curr_state]
-    for i in range(1000):
-        input_torque = C.control(curr_state, goal_pos)
-        curr_state = M.step(curr_state, input_torque)
+    for i in range(10000):
+        inputs = C.control(curr_state, goal_velocity)
+        curr_state = M.step(curr_state, inputs)
         states.append(curr_state)
 
     states = np.array(states)
 
     plt.figure()
+
+    plt.subplot(2,1,1)
+    plt.plot(states[:,0])
+    plt.ylabel("v")
+
+    plt.subplot(2,1,2)
+    plt.plot(states[:,1])
+    plt.ylabel("w")
+
+    plt.tight_layout(pad=2)
+    plt.show()
+
+def test_velocity_to_pose(init_pose=np.array([50,50,0]), goal_pos=np.array([55,55])):
+    import matplotlib.pyplot as plt
+
+    M = DifferentialDriveVelocityInput(sampling_period=0.01)
+    C = PVelocityController(M, KP_V=4, KP_W=100, max_rpm=60)
+
+    curr_state = init_pose
+    
+    states = [curr_state]
+    for i in range(1000):
+        inputs = C.control(curr_state, goal_pos)
+        curr_state = M.step(curr_state, inputs)
+        states.append(curr_state)
+
+    states = np.array(states)
+
+    plt.figure()
+
     plt.subplot(3,1,1)
     plt.plot(states[:,0])
     plt.ylabel("x")
+
     plt.subplot(3,1,2)
     plt.plot(states[:,1])
     plt.ylabel("y")
+
     plt.subplot(3,1,3)
     plt.plot(states[:,2])
     plt.ylabel("theta")
+
+    plt.tight_layout(pad=2)
     plt.show()
+    
+def test_full_state(init_state=np.array([50,50,0,0,0]), goal_pos=np.array([55,55])):
+    import matplotlib.pyplot as plt
+
+    M = DifferentialDriveTorqueInput(sampling_period=0.01)
+    C = PVelocitySSTorqueController(M, KP_V=4, KP_W=100, max_rpm=60, Q=np.diag(np.array([1000,2000])), max_torque=100)
+
+    curr_state = init_state
+
+    states = [curr_state]
+    for i in range(1000):
+        inputs = C.control(curr_state, goal_pos)
+        curr_state = M.step(curr_state, inputs)
+        states.append(curr_state)
+
+    states = np.array(states)
+
+    plt.figure()
+
+    plt.subplot(5,1,1)
+    plt.plot(states[:,0])
+    plt.ylabel("x")
+
+    plt.subplot(5,1,2)
+    plt.plot(states[:,1])
+    plt.ylabel("y")
+
+    plt.subplot(5,1,3)
+    plt.plot(states[:,2])
+    plt.ylabel("theta")
+
+    plt.subplot(5,1,4)
+    plt.plot(states[:,3])
+    plt.ylabel("v")
+
+    plt.subplot(5,1,5)
+    plt.plot(states[:,4])
+    plt.ylabel("w")
+
+    plt.tight_layout(pad=2)
+    plt.show()
+
+
+if __name__ == "__main__":
+    # test_torque_to_velocity()
+    # test_velocity_to_pose()
+    test_full_state()
