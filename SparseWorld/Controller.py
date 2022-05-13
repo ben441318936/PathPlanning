@@ -29,7 +29,7 @@ class Controller(ABC):
         return self._motion_model
 
     @abstractmethod
-    def control(self) -> np.ndarray:
+    def control(self) -> dict:
         pass
 
 class PVelocityController(Controller):
@@ -51,7 +51,7 @@ class PVelocityController(Controller):
         self._KP_V = KP_V
         self._KP_W = KP_W
 
-    def control(self, curr_pose: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
+    def control(self, curr_pose: np.ndarray, goal_pos: np.ndarray) -> dict:
         curr_pos = self._motion_model.state_2_position(curr_pose)
         curr_heading = self._motion_model.state_2_heading(curr_pose)
         curr_heading = np.arctan2(np.sin(curr_heading), np.cos(curr_heading))
@@ -103,7 +103,7 @@ class SSTorqueController(Controller):
 
     __slots__ = ("_Q", "_R", "_K", "_max_torque")
 
-    def __init__(self, motion_model: DifferentialDriveTorqueToVelocity, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueToVelocity, Q=np.diag(np.array([1000,2000])), R=np.eye(2), max_torque: float = 100) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
         self._Q = Q
@@ -138,7 +138,7 @@ class SSTorqueController(Controller):
         self._K, S, E = control.lqr(sys_d, self._Q, self._R)
         self._K = np.array(self._K)
         
-    def control(self, curr_velocity: np.ndarray, goal_velocity: np.ndarray) -> np.ndarray:
+    def control(self, curr_velocity: np.ndarray, goal_velocity: np.ndarray) -> dict:
         '''
         Goal velocity is formatted as [v,w]
         '''
@@ -162,7 +162,7 @@ class PVelocitySSTorqueController(Controller):
 
     __slots__ = ("_velocity_to_pose_controller", "_torque_to_velocity_controller")
 
-    def __init__(self, motion_model: DifferentialDriveTorqueInput, KP_V: float = 4, KP_W: float = 100, max_rpm: float = 60, Q=np.eye(2), R=np.eye(2), max_torque: float = 100) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueInput, KP_V: float = 4, KP_W: float = 100, max_rpm: float = 60, Q=np.diag(np.array([1000,2000])), R=np.eye(2), max_torque: float = 100) -> None:
         super().__init__(motion_model)
         self._motion_model = motion_model
         self._velocity_to_pose_controller = PVelocityController(motion_model.velocity_input_submodel, KP_V=KP_V, KP_W=KP_W, max_rpm=max_rpm)
@@ -182,7 +182,13 @@ class PVelocitySSTorqueController(Controller):
         
     def control(self, curr_state: np.ndarray, goal_pos: np.ndarray) -> np.ndarray:
         v_w_ref = self._velocity_to_pose_controller.control(self._motion_model.state_2_pose(curr_state), goal_pos)
-        v_w_ref = np.array([v_w_ref["v"], v_w_ref["w"]])
+        v_w_names = self._motion_model.velocity_input_submodel.input_names
+        for key, value in v_w_ref.items():
+            if key == v_w_names[0]:
+                v = value
+            if key == v_w_names[1]:
+                w = value
+        v_w_ref = np.array([v, w])
         curr_v_w = np.array([self._motion_model.state_2_velocity(curr_state), self._motion_model.state_2_yaw_rate(curr_state)])
         return self._torque_to_velocity_controller.control(curr_v_w, v_w_ref)
 
@@ -196,7 +202,7 @@ def test_torque_to_velocity(init_velocity=np.array([0,0]), goal_velocity=np.arra
     curr_state = init_velocity
     
     states = [curr_state]
-    for i in range(10000):
+    for i in range(1000):
         inputs = C.control(curr_state, goal_velocity)
         curr_state = M.step(curr_state, inputs)
         states.append(curr_state)
@@ -292,6 +298,6 @@ def test_full_state(init_state=np.array([50,50,0,0,0]), goal_pos=np.array([55,55
 
 
 if __name__ == "__main__":
-    # test_torque_to_velocity()
+    test_torque_to_velocity()
     # test_velocity_to_pose()
-    test_full_state()
+    # test_full_state()

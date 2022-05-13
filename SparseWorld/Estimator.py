@@ -237,7 +237,7 @@ def test_wheel_velocity_estimator(init_velocity=np.array([0,0]), goal_velocity=n
     estimated_states = [curr_state]
     errors = [np.zeros((2))]
 
-    for i in range(10000):
+    for i in range(1000):
         control_action = C.control(E.estimate, goal_velocity)
 
         input_noise = np.random.multivariate_normal(np.zeros((2,)), input_noise_var, size=None)
@@ -386,7 +386,7 @@ def test_full_estimator(init_state=np.array([50,50,0,0,0]), goal_pos=np.array([5
     estimated_states = [curr_state]
     errors = [np.zeros((5))]
 
-    for i in range(10000):
+    for i in range(1000):
         control_action = C.control(E.estimate, goal_pos)
 
         input_noise = np.random.multivariate_normal(np.zeros((2,)), input_noise_var, size=None)
@@ -471,9 +471,9 @@ def test_full_estimator(init_state=np.array([50,50,0,0,0]), goal_pos=np.array([5
 
 
 if __name__ == "__main__":
-    # test_wheel_velocity_estimator()
+    test_wheel_velocity_estimator()
     # test_pose_estimator()
-    test_full_estimator()
+    # test_full_estimator()
     
 
 
