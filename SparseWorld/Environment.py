@@ -4,7 +4,7 @@ Implements the environment in which a robot can move.
 Stores the (ground truth) state of the robot. 
 
 Supports Axis-Aligned Bounding-Box (AABB) type obstacles.
-Implements ray-trace based emulated LIDAR scanning against AABB obstacles.
+Implements continuous space ray-trace based emulated LIDAR scanning against AABB obstacles.
 '''
 
 from collections import namedtuple
@@ -199,7 +199,7 @@ class Environment():
             ray = np.array([self.agent_position, self.agent_position + cone_ends[i,:]])
             int_points = self.ray_intersect_obstacles(ray)
             if len(int_points) == 0:
-                results.append(ScanResult(angles[i], max_range))
+                results.append(ScanResult(angles[i], np.inf))
             else:
                 int_points = np.array(int_points)
                 ranges = np.linalg.norm(int_points - self.agent_position, axis=1)
@@ -216,18 +216,19 @@ if __name__ == "__main__":
 
     E.agent_heading = np.pi/4
 
-    E.add_obstacle(Obstacle(top=53,bottom=50,left=52,right=55))
+    E.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
 
-    results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5)
+    results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=1/180*np.pi)
 
     plt.figure()
     for res in results:
         ang = res.angle
         rng = res.range
-        start = E.agent_position
-        end = start + rng * np.array([np.cos(ang), np.sin(ang)])
-        plt.plot([start[0], end[0]], [start[1], end[1]])
-        plt.axis("equal")
+        if rng < np.inf:
+            start = E.agent_position
+            end = start + rng * np.array([np.cos(ang), np.sin(ang)])
+            plt.plot([start[0], end[0]], [start[1], end[1]])
+            plt.axis("equal")
     plt.show()
 
     # pos = []

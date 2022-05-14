@@ -1,0 +1,158 @@
+'''
+Implements different map storages that an agent/planner/estimator will use.
+
+Includes a Map interface for all map objects.
+'''
+
+import numpy as np
+from abc import ABC, abstractmethod
+from enum import IntEnum
+
+from skimage.draw import line
+from Environment import ScanResult
+from typing import List
+
+def raytrace(start_x: int, start_y: int, end_x: int, end_y: int) -> tuple:
+    ray_yy, ray_xx = line(start_y, start_x, end_y, end_x)
+    return ray_xx, ray_yy
+
+class GridStatus(IntEnum):
+    EMPTY = 0
+    OBSTACLE = 1
+    TARGET = 2
+    OOB = 3 # out of bounds
+
+class Map(ABC):
+    '''
+    Basic interface for map objects.
+    '''
+
+    __slots__ = ("_map", "_xlim", "_ylim")
+
+    def __init__(self, xlim=(0,10), ylim=(0,10)) -> None:
+        self._xlim = xlim
+        self._ylim = ylim
+        self._map = None
+
+    @abstractmethod
+    def get_status(self, coord: np.ndarray) -> GridStatus:
+        '''
+        Checks the status of some floating point coordinate.
+        '''
+        pass
+
+    @abstractmethod
+    def update_map(self, scan_start: np.ndarray, scans: List[ScanResult]) -> None:
+        pass
+
+
+class OccupancyGrid(Map):
+    '''
+    An occupancy map based on evenly spaced discretization.
+    '''
+
+    __slots__ = ("_res", "_n_cells", "_LOG_ODDS", "_LOG_ODDS_LIM")
+
+    def __init__(self, xlim=(-5, 5), ylim=(-5, 5), res=1, log_odds=np.log(4), log_odds_lim_factor=10) -> None:
+        super().__init__(xlim, ylim)
+        self._LOG_ODDS = log_odds
+        self._LOG_ODDS_LIM = log_odds * log_odds_lim_factor
+        self._res = res
+        n_cells_x = int(np.ceil((xlim[1]-xlim[0]) / res + 1))
+        n_cells_y = int(np.ceil((ylim[1]-ylim[0]) / res + 1))
+        self._n_cells = (n_cells_x, n_cells_y)
+        self._map = np.zeros(self._n_cells)
+
+    def convert_to_grid_coord(self, coord: np.ndarray) -> np.ndarray:
+        '''
+        Converts floating point coordinates into integer grid coordinates.
+        '''
+        map_center = ((self._xlim[1] - self._xlim[0]) / 2, (self._ylim[1] - self._ylim[0]) / 2)
+        center_cell = ((self._n_cells[0]-1)/2, (self._n_cells[1]-1)/2) # these are always ints
+        out_coord = np.zeros((2), dtype=int)
+        for i in range(coord.shape[0]):
+            offset = coord[i] - map_center[i]
+            if np.abs(offset) <= self._res / 2:
+                out_coord[i] = center_cell[i]
+            else:
+                out_coord[i] = center_cell[i] + np.sign(offset) * np.ceil((np.abs(offset) - self._res/2) / self._res)
+        return out_coord
+
+    def get_status(self, coord: np.ndarray) -> GridStatus:
+        return self._map[coord]
+
+    def update_map(self, scan_start: np.ndarray, scans: List[ScanResult]) -> None:
+        # scans is N x (ang,rng)
+        angs = np.array([scan.angle for scan in scans]) 
+        rngs = np.array([scan.range for scan in scans]) 
+
+        # discord those that did not get a LIDAR return
+        angs = angs[rngs<np.inf].reshape((-1,1)) # (N,1)
+        rngs = rngs[rngs<np.inf].reshape((-1,1)) # (N,1)
+
+        endpoints = scan_start + rngs * np.hstack((np.cos(angs), np.sin(angs))) # (N,2)
+
+        ray_start = self.convert_to_grid_coord(scan_start)
+
+        for i in range(endpoints.shape[0]):
+            endpoint = endpoints[i,:]
+            endpoint = self.convert_to_grid_coord(endpoint)
+            ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
+            last_point = (ray_xx[-1], ray_yy[-1])
+            self._map[last_point[0], last_point[1]] += self._LOG_ODDS
+            ray_xx = ray_xx[0:-1]
+            ray_yy = ray_yy[0:-1]
+            self._map[ray_xx, ray_yy] -= self._LOG_ODDS
+        np.clip(self._map, -self._LOG_ODDS_LIM, self._LOG_ODDS_LIM, out=self._map)
+
+    def get_binary_map(self) -> np.ndarray:
+        return 1 * (self._map > 0)
+
+
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    import matplotlib.transforms as mtransforms
+
+    from MotionModel import DifferentialDriveTorqueInput
+    from Environment import Environment, Obstacle
+
+    M = DifferentialDriveTorqueInput(sampling_period=0.1)
+    E = Environment(motion_model=M)
+
+    E.agent_heading = 0
+
+    E.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
+    E.add_obstacle(Obstacle(top=48,bottom=40,left=52,right=60))
+
+    results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=1/180*np.pi)
+
+    MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=0.5)
+    MAP.update_map(E.agent_position, results)
+
+    map = MAP.get_binary_map()
+    # map = MAP._map
+
+    map = np.rot90(map)
+
+    plt.imshow(map, cmap="gray")
+    plt.show()
+
+    # plt.figure()
+    # for res in results:
+    #     ang = res.angle
+    #     rng = res.range
+    #     start = E.agent_position
+    #     end = start + rng * np.array([np.cos(ang), np.sin(ang)])
+    #     plt.plot([start[0], end[0]], [start[1], end[1]])
+    #     plt.axis("equal")
+    # plt.show()
+
+
+    
+        
+
+    
+
+
+
