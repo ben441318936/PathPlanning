@@ -20,19 +20,18 @@ Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
 class Simulation(object):
 
     __slots__ = ("_render", "_window_size", "_FPS", "_render_offset", "_center_col_width", 
-                 "_environment", "_goal", "_controller", "_estimator", "_input_noise_var", "_encoder_noise_var",
+                 "_environment", "_controller", "_estimator", "_input_noise_var", "_encoder_noise_var",
                  "_clock", "_screen", "_color_dict")
 
     def __init__(self, environment: Environment = None, controller: Controller = None, estimator: Estimator = None,
                  input_noise_var: np.ndarray=None, encoder_noise_var: np.ndarray=None,
-                 goal: np.ndarray=None, render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
+                 render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
         self._render = render
         self._window_size = window_size
         self._FPS = FPS
         self._render_offset = render_offset # (top,bottom,left,right)
         self._center_col_width = center_col_width
         self._environment : Environment = environment
-        self._goal : np.ndarray = goal
         self._controller : Controller = controller
         self._estimator : Estimator = estimator
         self._input_noise_var : np.ndarray = input_noise_var
@@ -61,8 +60,8 @@ class Simulation(object):
         return self._environment
 
     @property
-    def goal(self) -> np.ndarray:
-        return self._goal
+    def target(self) -> np.ndarray:
+        return self._environment.target_position
 
     @property
     def controller(self) -> Controller:
@@ -102,7 +101,7 @@ class Simulation(object):
             estimated_state = self._estimator.estimate
 
             # use state estimate to compute control
-            control_action = self._controller.control(estimated_state, self._goal)
+            control_action = self._controller.control(estimated_state, self.target)
             # add noise to input
             input_noise = np.random.multivariate_normal(np.zeros((self._input_noise_var.shape[0],)), self._input_noise_var, size=None)
             noisy_input = control_action.copy()
@@ -171,9 +170,9 @@ class Simulation(object):
         final_pts = agent_pos.reshape((2,1)) + rotated
         pygame.draw.polygon(self._screen, self._color_dict["red"], [final_pts[:,0], final_pts[:,1], final_pts[:,2], final_pts[:,3]])
 
-        # draw goal
-        scaled_goal = (scale_x(self.goal[0]), scale_y(self.goal[1]))
-        pygame.draw.circle(self._screen, self._color_dict["green"], scaled_goal, 3)
+        # draw target
+        scaled_target = (scale_x(self.target[0]), scale_y(self.target[1]))
+        pygame.draw.circle(self._screen, self._color_dict["green"], scaled_target, 3)
 
     def render_frame(self) -> None:
         if not self._render:
@@ -238,7 +237,7 @@ if __name__ == "__main__":
     # Mot = DifferentialDriveTorqueInput(sampling_period=0.01)
     Mot = DifferentialDriveVelocityInput(sampling_period=0.01)
 
-    Env = Environment(motion_model=Mot)
+    Env = Environment(motion_model=Mot, target_position=np.array([90,80]))
     # E.agent_heading = np.pi/4
     # E.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
     # E.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
@@ -254,7 +253,6 @@ if __name__ == "__main__":
 
     Sim = Simulation(environment=Env, controller=Con, estimator=Est, 
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,
-                     goal=np.array([90,80]), 
                      render=True, window_size=(1050, 550), FPS=100, render_offset=Offset(50,0,0,0), center_col_width=50)
 
     Sim.render_frame()

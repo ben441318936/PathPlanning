@@ -46,7 +46,20 @@ class Map(ABC):
         pass
 
 
-class OccupancyGrid(Map):
+class GridMap(Map):
+    '''
+    Map based on grid-like discretization of the environment.
+    '''
+    __slots__ = ()
+
+    def __init__(self, xlim=(0, 10), ylim=(0, 10)) -> None:
+        super().__init__(xlim, ylim)
+
+    @abstractmethod
+    def convert_to_grid_coord(self, coord: np.ndarray) -> np.ndarray:
+        pass
+
+class OccupancyGrid(GridMap):
     '''
     An occupancy map based on evenly spaced discretization.
     '''
@@ -61,7 +74,11 @@ class OccupancyGrid(Map):
         n_cells_x = int(np.ceil((xlim[1]-xlim[0]) / res + 1))
         n_cells_y = int(np.ceil((ylim[1]-ylim[0]) / res + 1))
         self._n_cells = (n_cells_x, n_cells_y)
-        self._map = np.zeros(self._n_cells)
+        self._map = np.zeros(self._n_cells) # need data type double to handle log odds
+
+    @property
+    def shape(self) -> tuple:
+        return self._n_cells
 
     def convert_to_grid_coord(self, coord: np.ndarray) -> np.ndarray:
         '''
@@ -79,7 +96,7 @@ class OccupancyGrid(Map):
         return out_coord
 
     def get_status(self, coord: np.ndarray) -> GridStatus:
-        return self._map[coord]
+        return 1 * self._map[coord[0], coord[1]] > 0
 
     def update_map(self, scan_start: np.ndarray, scans: List[ScanResult]) -> None:
         # scans is N x (ang,rng)
@@ -112,13 +129,12 @@ class OccupancyGrid(Map):
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    import matplotlib.transforms as mtransforms
 
     from MotionModel import DifferentialDriveTorqueInput
     from Environment import Environment, Obstacle
 
     M = DifferentialDriveTorqueInput(sampling_period=0.1)
-    E = Environment(motion_model=M)
+    E = Environment(motion_model=M, target_position=np.array([90,50]))
 
     E.agent_heading = 0
 
@@ -127,7 +143,7 @@ if __name__ == "__main__":
 
     results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=1/180*np.pi)
 
-    MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=0.5)
+    MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
     MAP.update_map(E.agent_position, results)
 
     map = MAP.get_binary_map()

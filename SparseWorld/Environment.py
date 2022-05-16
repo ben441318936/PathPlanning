@@ -33,14 +33,15 @@ ScanResult = namedtuple("ScanResult", ["angle", "range"])
 
 class Environment():
 
-    __slots__ = ("_env_size", "_motion_model", "_agent_state", "_obstacles")
+    __slots__ = ("_env_size", "_motion_model", "_agent_state", "_obstacles", "_target_position")
 
-    def __init__(self, env_size=(100,100), motion_model: MotionModel = None) -> None:
+    def __init__(self, env_size=(100,100), motion_model: MotionModel = None, target_position: np.ndarray = None) -> None:
         self._env_size = env_size
         self._motion_model : MotionModel = motion_model
+        self._obstacles : List[Obstacle] = []
         self._agent_state = np.zeros((self._motion_model.state_dim))
         self.agent_position = np.array([env_size[0]/2, env_size[1]/2])
-        self._obstacles : List[Obstacle] = []
+        self._target_position = target_position
 
     @property
     def env_size(self) -> tuple:
@@ -62,16 +63,28 @@ class Environment():
             return False
 
     @property
+    def target_position(self) ->np.ndarray:
+        return self._target_position
+
+    @target_position.setter
+    def target_position(self, pos: np.ndarray) -> bool:
+        if len(pos.shape) == 1 and pos.shape[0] == 2:
+            if not self.position_out_of_bounds(pos) and not self.position_in_obstacles(pos):
+                self._target_position = pos
+                return True
+        return False
+
+    @property
     def agent_state(self) -> np.ndarray:
         return self._agent_state
 
     @agent_state.setter
     def agent_state(self, state: np.ndarray) -> bool:
         if len(state.shape) == 1 and state.shape[0] == self._motion_model.state_dim:
-            self._agent_state = state
-            return True
-        else:
-            return False
+            if not self.state_out_of_bounds(state) and not self.state_in_obstacles(state):
+                self._agent_state = state
+                return True
+        return False
     
     @property
     def agent_position(self) -> np.ndarray:
@@ -80,10 +93,10 @@ class Environment():
     @agent_position.setter
     def agent_position(self, position: np.ndarray) -> bool:
         if len(position.shape) == 1 and position.shape[0] == 2:
-            self._motion_model.set_position(self._agent_state, position)
-            return True
-        else:
-            return False
+            if not self.position_out_of_bounds(position) and not self.position_in_obstacles(position):
+                self._motion_model.set_position(self._agent_state, position)
+                return True
+        return False
 
     @property
     def agent_heading(self) -> float:
@@ -101,10 +114,11 @@ class Environment():
     @agent_pose.setter
     def agent_pose(self, pose: np.ndarray) -> bool:
         if len(pose.shape) == 1 and pose.shape[0] == 3:
-            self._motion_model.set_pose(self._agent_state, pose)
-            return True
-        else:
-            return False
+            position = pose[0:2]
+            if not self.position_out_of_bounds(position) and not self.position_in_obstacles(position):
+                self._motion_model.set_pose(self._agent_state, pose)
+                return True
+        return False
 
     @property
     def agent_yaw_rate(self) -> float:
@@ -135,6 +149,12 @@ class Environment():
 
     def position_in_obstacle(self, pos: np.ndarray, obs: Obstacle) -> bool:
         return pos[0] >= obs.left and pos[0] <= obs.right and pos[1] >= obs.bottom and pos[1] <= obs.top
+
+    def position_in_obstacles(self, pos: np.ndarray) -> bool:
+        for obs in self._obstacles:
+            if self.position_in_obstacle(pos, obs):
+                return True
+        return False
 
     def state_in_obstacle(self, state: np.ndarray, obs: Obstacle) -> bool:
         pos = self._motion_model.state_2_position(state)
