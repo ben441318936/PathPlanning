@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from enum import IntEnum
 
 from skimage.draw import line
+from skimage.morphology import square, dilation
+
 from Environment import ScanResult
 from typing import List
 
@@ -119,7 +121,7 @@ class OccupancyGrid(GridMap):
     def update_map(self, scan_start: np.ndarray, scans: List[ScanResult]) -> None:
         # scans is N x (ang,rng)
         angs = np.array([scan.angle for scan in scans]) 
-        rngs = np.array([scan.range for scan in scans]) 
+        rngs = np.array([scan.range for scan in scans])
 
         # discord those that did not get a LIDAR return
         angs = angs[rngs<np.inf].reshape((-1,1)) # (N,1)
@@ -143,6 +145,11 @@ class OccupancyGrid(GridMap):
     def get_binary_map(self) -> np.ndarray:
         return 1 * (self._map > 0)
 
+    def get_binary_map_safe(self, margin: int = 1) -> np.ndarray:
+        binary_map = self.get_binary_map()
+        dilation(binary_map, square(int(margin*2+1)), out=binary_map)
+        return binary_map
+
 
 
 if __name__ == "__main__":
@@ -164,7 +171,7 @@ if __name__ == "__main__":
     MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
     MAP.update_map(E.agent_position, results)
 
-    map = MAP.get_binary_map()
+    map = MAP.get_binary_map_safe(margin=2)
     # map = MAP._map
 
     map = np.rot90(map)

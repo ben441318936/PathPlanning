@@ -3,7 +3,6 @@ Implements different planning algorithms.
 '''
 
 from abc import ABC, abstractmethod
-from sre_constants import RANGE_UNI_IGNORE
 import numpy as np
 from typing import List
 
@@ -15,7 +14,6 @@ from pqdict import pqdict
 from collections import namedtuple
 
 from functools import partial
-
 
 class Planner(ABC):
     '''
@@ -48,13 +46,6 @@ class Planner(ABC):
     def plan(self, start: np.ndarray, target: np.ndarray) -> bool:
         '''
         Implements high level planning logic.
-        '''
-        pass
-
-    @abstractmethod
-    def _plan_algo(self, start: np.ndarray, target: np.ndarray) -> bool:
-        '''
-        Implements the actual planning algorithm.
         '''
         pass
 
@@ -127,12 +118,13 @@ class SearchBasedPlanner(Planner):
     '''
     Planner based on discretizing the environment and searching the resulting graph.
     '''
-    __slots__ = ("_map", "_neighbor_func")
+    __slots__ = ("_map", "_neighbor_func", "_margin")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors) -> None:
+    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0) -> None:
         super().__init__()
         self._map = OccupancyGrid(xlim=xlim, ylim=ylim, res=res)
         self._neighbor_func = neighbor_func
+        self._margin = safety_margin
 
     @property
     def map(self) -> OccupancyGrid:
@@ -147,25 +139,52 @@ class SearchBasedPlanner(Planner):
     def take_next_stop(self) -> np.ndarray:
         return self._map.convert_to_world_coord(super().take_next_stop())
 
-    def path_valid(self, start: np.ndarray) -> bool:
+    def path_valid(self) -> bool:
         if super().path_valid():
             # self._path.shape[0] == 1 iff start and stop is the same in the planning algo
-            if self._path.shape[0] != 1 and self._path_idx+1 >= len(self._path):
+            if self._path.shape[0] == 1:
+                return True
+            elif self._path.shape[0] != 1 and self._path_idx+1 >= len(self._path):
                 # no more stops in current path
                 return False
-            # path is longer than 1, check straight line between each stop
+            # path is longer than 1, we have more stops after, check straight line to next stop
             else:
-                for i in range(self._path_idx, len(self._path)):
-                    if i == 0:
-                        start = self._map.convert_to_grid_coord(start)
-                    else:
-                        start = self._path[i-1]
-                    pos = self._path[i]
-                    ray_xx, ray_yy = raytrace(start[0], start[1], pos[0], pos[1])
-                    if np.sum(self._map._map[ray_xx, ray_yy] > 0) == 0:
-                        return False
-            return True
+                start = self._path[self._path_idx]
+                pos = self._path[self._path_idx+1]
+                ray_xx, ray_yy = raytrace(start[0], start[1], pos[0], pos[1])
+                if np.sum(self._map.get_status(np.array([ray_xx, ray_yy])) == GridStatus.OBSTACLE) == 0:
+                    return True
+                else:
+                    return False
         else:
+            return False
+
+    @abstractmethod
+    def _plan_algo(binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
+        pass
+
+    def plan(self, start: np.ndarray, target: np.ndarray) -> bool:
+        start = self._map.convert_to_grid_coord(start)
+        target = self._map.convert_to_grid_coord(target)
+        if start[0] == target[0] and start[1] == target[1]:
+            self._path = np.array([start])
+            return True
+        if self._margin == 0:
+            binary_map = self._map.get_binary_map()
+        else:
+            binary_map = self._map.get_binary_map_safe(margin = np.ceil(self._margin / self._map.resolution))
+        # sometimes the safety margin grows into the starting location
+        # but it is actually safe
+        if self._map.get_status(start) == GridStatus.EMPTY:
+            binary_map[start[0], start[1]] = GridStatus.EMPTY
+            if self._plan_algo(binary_map, start, target):
+                self._path_idx = 0
+                return True
+        else:
+            print("Planning failed with discrete cells")
+            print("Start:", start)
+            print("Start map status:", self._map.get_status(start))
+            print("Target:", target)
             return False
 
 
@@ -176,17 +195,12 @@ class A_Star_Planner(SearchBasedPlanner):
 
     __slots__ = ("_eps", "_heuristic")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, eps=1, heuristic=np.linalg.norm) -> None:
-        super().__init__(xlim=xlim, ylim=ylim, res=res, neighbor_func=neighbor_func)
+    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0, eps=1, heuristic=np.linalg.norm) -> None:
+        super().__init__(xlim=xlim, ylim=ylim, res=res, neighbor_func=neighbor_func, safety_margin=safety_margin)
         self._eps = eps
         self._heuristic = heuristic
 
-    def _plan_algo(self, start: np.ndarray, target: np.ndarray) -> bool:
-        if start[0] == target[0] and start[1] == target[1]:
-            self._path = np.array([start])
-            return True
-
-        binary_map = self._map.get_binary_map()
+    def _plan_algo(self, binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
         # Initialize the data structures
         # Labels
         g = np.ones(binary_map.shape) * np.inf
@@ -241,18 +255,6 @@ class A_Star_Planner(SearchBasedPlanner):
         path = list(reversed(path))
         self._path = np.array(path)
         return done
-
-    def plan(self, start: np.ndarray, target: np.ndarray) -> bool:
-        start = self._map.convert_to_grid_coord(start)
-        target = self._map.convert_to_grid_coord(target)
-        if self._plan_algo(start, target):
-            self._path_idx = 0
-            return True
-        else:
-            print("Planning failed with discrete cells")
-            print("Start:", start)
-            print("Target:", target)
-        return False
 
     def next_stop(self) -> np.ndarray:
         if self._path.shape[0] == 1:

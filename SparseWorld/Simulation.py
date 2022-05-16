@@ -13,7 +13,7 @@ from MotionModel import DifferentialDriveTorqueInput, DifferentialDriveVelocityI
 from Environment import Environment, Obstacle
 from Controller import Controller, PVelocityController, PVelocitySSTorqueController
 from Estimator import Estimator, WheelVelocityEstimator, PoseEstimator, FullStateEstimator
-from Planner import A_Star_Planner, Planner, SearchBasedPlanner, get_n_grid_neighbors
+from Planner import A_Star_Planner, Planner, SearchBasedPlanner, get_8_neighbors, get_n_grid_neighbors
 
 import pygame
 pygame.init()
@@ -109,7 +109,7 @@ class Simulation(object):
             self._planner.update_environment(estimated_pos, results)
 
             # plan a path
-            if not self._planner.path_valid(estimated_pos):
+            if not self._planner.path_valid():
                 if not self._planner.plan(estimated_pos, self.target):
                     print("Planning failed")
                     print("estimated pos", estimated_pos)
@@ -117,7 +117,7 @@ class Simulation(object):
                     break
                 next_stop = self._planner.take_next_stop()
 
-            if self._planner.path_valid(estimated_pos) and np.linalg.norm(estimated_pos - next_stop) < self._planner.map.resolution:
+            if self._planner.path_valid() and np.linalg.norm(estimated_pos - next_stop) < self._planner.map.resolution:
                 next_stop =  self._planner.take_next_stop()
 
             # use state estimate to compute control action to next stop
@@ -259,10 +259,13 @@ if __name__ == "__main__":
 
     Env = Environment(motion_model=Mot, target_position=np.array([90,80]))
     # E.agent_heading = np.pi/4
-    # E.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
-    # E.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
+    # Env.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
+    # Env.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
 
-    Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
+    # Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
+
+    Env.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
+    Env.add_obstacle(Obstacle(top=48,bottom=40,left=52,right=60))
 
     # Env.agent_position = np.array([50,50])
 
@@ -273,7 +276,7 @@ if __name__ == "__main__":
     # Est = WheelVelocityEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
     Est = PoseEstimator(Mot, input_noise_var)
 
-    Pla = A_Star_Planner(res=1, neighbor_func=partial(get_n_grid_neighbors, n=5))
+    Pla = A_Star_Planner(res=1, neighbor_func=get_8_neighbors, safety_margin=1)
 
     Sim = Simulation(environment=Env, controller=Con, estimator=Est, planner=Pla,
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,
