@@ -3,15 +3,19 @@ Implements different planning algorithms.
 '''
 
 from abc import ABC, abstractmethod
+from sre_constants import RANGE_UNI_IGNORE
 import numpy as np
 from typing import List
 
 from Environment import ScanResult
-from Map import Map, GridStatus, GridMap, OccupancyGrid
+from Map import Map, GridStatus, GridMap, OccupancyGrid, raytrace
 
 from pqdict import pqdict
 
 from collections import namedtuple
+
+from functools import partial
+
 
 class Planner(ABC):
     '''
@@ -37,9 +41,6 @@ class Planner(ABC):
         '''
         if self._path is None:
             # doesn't have a path yet
-            return False
-        elif self._path_idx >= len(self._path):
-            # no more stops in current path
             return False
         return True
 
@@ -95,19 +96,77 @@ def get_8_neighbors(map: np.ndarray, vertex: tuple) -> List[VertexInfo]:
                 infos.append(VertexInfo(coord, cost))
     return infos
 
+def get_n_grid_neighbors(map: np.ndarray, vertex: tuple, n: int = 3) -> List[VertexInfo]:
+    '''
+    Get neighbors in a n x n grid. Using a binary map.
+
+    n should be an odd interger greater than or equal to 3.
+
+    Ex: n=3, get the 8 neighbors in a 3x3 grid.
+    '''
+    if n < 3:
+        n = 3
+    if n % 2 == 0:
+        n += 1
+    infos = []
+    for i in range(-(n-1)//2,(n-1)//2+1):
+        for j in range(-(n-1)//2,(n-1)//2+1):
+            pos = np.array(vertex) + np.array([i,j])
+            if (not (i == 0 and j == 0)) and pos[0] >= 0 and pos[1] >= 0 and pos[0] < map.shape[0] and pos[1] < map.shape[1]:
+                ray_xx, ray_yy = raytrace(vertex[0], vertex[1], pos[0], pos[1])
+                if np.sum(map[ray_xx, ray_yy] == GridStatus.OBSTACLE) == 0:
+                    cost = np.linalg.norm(np.array([i,j]))
+                else:
+                    cost = np.inf
+                coord = tuple(pos)
+                infos.append(VertexInfo(coord, cost))
+    return infos
+    
+
 class SearchBasedPlanner(Planner):
     '''
     Planner based on discretizing the environment and searching the resulting graph.
     '''
     __slots__ = ("_map", "_neighbor_func")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=None) -> None:
+    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors) -> None:
         super().__init__()
         self._map = OccupancyGrid(xlim=xlim, ylim=ylim, res=res)
         self._neighbor_func = neighbor_func
 
+    @property
+    def map(self) -> OccupancyGrid:
+        return self._map
+
     def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
         return self._map.update_map(scan_start, scan_results)
+
+    def next_stop(self) -> np.ndarray:
+        return self._map.convert_to_world_coord(super().next_stop())
+
+    def take_next_stop(self) -> np.ndarray:
+        return self._map.convert_to_world_coord(super().take_next_stop())
+
+    def path_valid(self, start: np.ndarray) -> bool:
+        if super().path_valid():
+            # self._path.shape[0] == 1 iff start and stop is the same in the planning algo
+            if self._path.shape[0] != 1 and self._path_idx+1 >= len(self._path):
+                # no more stops in current path
+                return False
+            # path is longer than 1, check straight line between each stop
+            else:
+                for i in range(self._path_idx, len(self._path)):
+                    if i == 0:
+                        start = self._map.convert_to_grid_coord(start)
+                    else:
+                        start = self._path[i-1]
+                    pos = self._path[i]
+                    ray_xx, ray_yy = raytrace(start[0], start[1], pos[0], pos[1])
+                    if np.sum(self._map._map[ray_xx, ray_yy] > 0) == 0:
+                        return False
+            return True
+        else:
+            return False
 
 
 class A_Star_Planner(SearchBasedPlanner):
@@ -117,14 +176,16 @@ class A_Star_Planner(SearchBasedPlanner):
 
     __slots__ = ("_eps", "_heuristic")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=None, eps=1, heuristic=np.linalg.norm) -> None:
+    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, eps=1, heuristic=np.linalg.norm) -> None:
         super().__init__(xlim=xlim, ylim=ylim, res=res, neighbor_func=neighbor_func)
         self._eps = eps
         self._heuristic = heuristic
 
     def _plan_algo(self, start: np.ndarray, target: np.ndarray) -> bool:
-        start = self._map.convert_to_grid_coord(start)
-        target = self._map.convert_to_grid_coord(target)
+        if start[0] == target[0] and start[1] == target[1]:
+            self._path = np.array([start])
+            return True
+
         binary_map = self._map.get_binary_map()
         # Initialize the data structures
         # Labels
@@ -182,10 +243,26 @@ class A_Star_Planner(SearchBasedPlanner):
         return done
 
     def plan(self, start: np.ndarray, target: np.ndarray) -> bool:
+        start = self._map.convert_to_grid_coord(start)
+        target = self._map.convert_to_grid_coord(target)
         if self._plan_algo(start, target):
             self._path_idx = 0
             return True
+        else:
+            print("Planning failed with discrete cells")
+            print("Start:", start)
+            print("Target:", target)
         return False
+
+    def next_stop(self) -> np.ndarray:
+        if self._path.shape[0] == 1:
+            self._path_idx = -1    
+        return super().next_stop()
+    
+    def take_next_stop(self) -> np.ndarray:
+        if self._path.shape[0] == 1:
+            self._path_idx = -1
+        return super().take_next_stop()
     
 
     
@@ -203,10 +280,10 @@ if __name__ == "__main__":
     # E.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
     # E.add_obstacle(Obstacle(top=48,bottom=40,left=52,right=60))
 
-    E.add_obstacle(Obstacle(top=60,left=52,bottom=40,right=70))
+    E.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
 
     # MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
-    P = A_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors)
+    P = A_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=partial(get_n_grid_neighbors, n=3))
 
     results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=1/180*np.pi)
     P.update_environment(E.agent_position, results)

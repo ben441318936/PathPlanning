@@ -59,6 +59,10 @@ class GridMap(Map):
     def convert_to_grid_coord(self, coord: np.ndarray) -> np.ndarray:
         pass
 
+    @abstractmethod
+    def convert_to_world_coord(self, coord: np.ndarray) -> np.ndarray:
+        pass
+
 class OccupancyGrid(GridMap):
     '''
     An occupancy map based on evenly spaced discretization.
@@ -80,9 +84,13 @@ class OccupancyGrid(GridMap):
     def shape(self) -> tuple:
         return self._n_cells
 
+    @property
+    def resolution(self) -> float:
+        return self._res
+
     def convert_to_grid_coord(self, coord: np.ndarray) -> np.ndarray:
         '''
-        Converts floating point coordinates into integer grid coordinates.
+        Converts floating point coordinates into integer grid coordinates used to index the cells.
         '''
         map_center = ((self._xlim[1] - self._xlim[0]) / 2, (self._ylim[1] - self._ylim[0]) / 2)
         center_cell = ((self._n_cells[0]-1)/2, (self._n_cells[1]-1)/2) # these are always ints
@@ -94,6 +102,16 @@ class OccupancyGrid(GridMap):
             else:
                 out_coord[i] = center_cell[i] + np.sign(offset) * np.ceil((np.abs(offset) - self._res/2) / self._res)
         return out_coord
+
+    def convert_to_world_coord(self, coord: np.ndarray) -> np.ndarray:
+        '''
+        Convert grid cell indices into world coordinates.
+        '''
+        map_center = ((self._xlim[1] - self._xlim[0]) / 2, (self._ylim[1] - self._ylim[0]) / 2)
+        center_cell = ((self._n_cells[0]-1)/2, (self._n_cells[1]-1)/2) # these are always ints
+        offset = coord - center_cell
+        return self._res * coord
+
 
     def get_status(self, coord: np.ndarray) -> GridStatus:
         return 1 * self._map[coord[0], coord[1]] > 0

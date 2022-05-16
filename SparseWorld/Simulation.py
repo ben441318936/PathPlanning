@@ -1,5 +1,7 @@
 from collections import namedtuple
+from unittest import result
 import numpy as np
+
 np.set_printoptions(precision=2, suppress=True)
 import sys
 
@@ -11,6 +13,7 @@ from MotionModel import DifferentialDriveTorqueInput, DifferentialDriveVelocityI
 from Environment import Environment, Obstacle
 from Controller import Controller, PVelocityController, PVelocitySSTorqueController
 from Estimator import Estimator, WheelVelocityEstimator, PoseEstimator, FullStateEstimator
+from Planner import A_Star_Planner, Planner, SearchBasedPlanner, get_n_grid_neighbors
 
 import pygame
 pygame.init()
@@ -20,11 +23,11 @@ Offset = namedtuple("Offset", ["top", "bottom", "left", "right"])
 class Simulation(object):
 
     __slots__ = ("_render", "_window_size", "_FPS", "_render_offset", "_center_col_width", 
-                 "_environment", "_controller", "_estimator", "_input_noise_var", "_encoder_noise_var",
+                 "_environment", "_controller", "_estimator", "_input_noise_var", "_encoder_noise_var", "_planner",
                  "_clock", "_screen", "_color_dict")
 
     def __init__(self, environment: Environment = None, controller: Controller = None, estimator: Estimator = None,
-                 input_noise_var: np.ndarray=None, encoder_noise_var: np.ndarray=None,
+                 input_noise_var: np.ndarray=None, encoder_noise_var: np.ndarray=None, planner: SearchBasedPlanner = None,
                  render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
         self._render = render
         self._window_size = window_size
@@ -36,6 +39,7 @@ class Simulation(object):
         self._estimator : Estimator = estimator
         self._input_noise_var : np.ndarray = input_noise_var
         self._encoder_noise_var : np.ndarray = encoder_noise_var
+        self._planner = planner
 
         if render and (window_size is None or FPS is None):
             print("Render set to True, but no render parameters given.")
@@ -99,9 +103,25 @@ class Simulation(object):
         while not self._environment.position_out_of_bounds(self._environment.agent_position):
             # get state estimate
             estimated_state = self._estimator.estimate
+            estimated_pos = self._environment.motion_model.state_2_position(estimated_state)
 
-            # use state estimate to compute control
-            control_action = self._controller.control(estimated_state, self.target)
+            results = self._environment.scan_cone(angle_range=(-np.pi, np.pi), max_range=5, resolution=5/180*np.pi)
+            self._planner.update_environment(estimated_pos, results)
+
+            # plan a path
+            if not self._planner.path_valid(estimated_pos):
+                if not self._planner.plan(estimated_pos, self.target):
+                    print("Planning failed")
+                    print("estimated pos", estimated_pos)
+                    print("actual pos", self._environment.agent_position)
+                    break
+                next_stop = self._planner.take_next_stop()
+
+            if self._planner.path_valid(estimated_pos) and np.linalg.norm(estimated_pos - next_stop) < self._planner.map.resolution:
+                next_stop =  self._planner.take_next_stop()
+
+            # use state estimate to compute control action to next stop
+            control_action = self._controller.control(estimated_state, next_stop)
             # add noise to input
             input_noise = np.random.multivariate_normal(np.zeros((self._input_noise_var.shape[0],)), self._input_noise_var, size=None)
             noisy_input = control_action.copy()
@@ -118,10 +138,10 @@ class Simulation(object):
             # self._estimator.update(encoder_obs)
 
             # debug monitor
-            print("True state:", self._environment.agent_state)
-            print("Esti state:", self._estimator.estimate)
-            print("Erro state:", self._environment.agent_state - self._estimator.estimate)
-            print()
+            # print("True state:", self._environment.agent_state)
+            # print("Esti state:", self._estimator.estimate)
+            # print("Erro state:", self._environment.agent_state - self._estimator.estimate)
+            # print()
 
             # render
             if self._render:
@@ -242,7 +262,9 @@ if __name__ == "__main__":
     # E.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
     # E.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
 
-    Env.agent_position = np.array([50,50])
+    Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
+
+    # Env.agent_position = np.array([50,50])
 
     # Con = PVelocitySSTorqueController(Mot, KP_V=4, KP_W=100, max_rpm=60, Q=np.diag(np.array([1000,2000])), max_torque=100)
     Con = PVelocityController(Mot)
@@ -251,7 +273,9 @@ if __name__ == "__main__":
     # Est = WheelVelocityEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
     Est = PoseEstimator(Mot, input_noise_var)
 
-    Sim = Simulation(environment=Env, controller=Con, estimator=Est, 
+    Pla = A_Star_Planner(res=1, neighbor_func=partial(get_n_grid_neighbors, n=5))
+
+    Sim = Simulation(environment=Env, controller=Con, estimator=Est, planner=Pla,
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,
                      render=True, window_size=(1050, 550), FPS=100, render_offset=Offset(50,0,0,0), center_col_width=50)
 
