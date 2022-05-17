@@ -56,13 +56,6 @@ class Planner(ABC):
         self._path_idx += 1
         return self._path[self._path_idx]
 
-    def advance_path_idx(self) -> None:
-        '''
-        Advance the path index because we already reached the currnt stop.
-        '''
-        self._path_idx += 1
-
-
     @abstractmethod
     def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
         '''
@@ -118,14 +111,14 @@ class SearchBasedPlanner(Planner):
     '''
     Planner based on discretizing the environment and searching the resulting graph.
     '''
-    __slots__ = ("_map", "_neighbor_func", "_margin", "_stop_idx_changed")
+    __slots__ = ("_map", "_neighbor_func", "_margin", "_path_idx_changed")
 
     def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0) -> None:
         super().__init__()
         self._map: OccupancyGrid = OccupancyGrid(xlim=xlim, ylim=ylim, res=res)
         self._neighbor_func = neighbor_func
         self._margin: int = np.ceil(safety_margin / self._map.resolution)
-        self._stop_idx_changed = False
+        self._path_idx_changed = False
 
     @property
     def map(self) -> OccupancyGrid:
@@ -147,22 +140,24 @@ class SearchBasedPlanner(Planner):
 
     def path_valid(self, start: np.ndarray) -> bool:
         if super().path_valid():
-            # self._path.shape[0] == 1 iff start and target is the same in the planning algo
-            # or we are trying to reach target in one stop
-            if self._path.shape[0] == 1:
+            # map didn't change, and the next stop didn't change
+            # no need to check for collision
+            if self._map.old_map_valid and not self._path_idx_changed:
                 return True
-            elif self._path.shape[0] > 2 and self._path_idx+1 >= len(self._path):
-                # no more stops in current path
+            # next stop is inf, something wrong from planning, force a replan
+            elif self._path_idx + 1 < self._path.shape[0] and np.sum(self._path[self._path_idx+1]) == np.inf:
                 return False
-            # path is longer than 1, we have more stops after, check straight line to next stop
             else:
-                if self._map.old_map_valid and not self._stop_idx_changed:
-                    return True
+                self._path_idx_changed = False
+                # check the line from current location to next stop
+                start = self._map.convert_to_grid_coord(start)
+                first_stop_valid = self._collision_free(self._map.get_binary_map(), start, self._path[self._path_idx])
+                # if one more stop is available, check it too
+                if self._path_idx + 1 < self._path.shape[0]:
+                    second_stop_valid = self._collision_free(self._map.get_binary_map(), self._path[self._path_idx], self._path[self._path_idx+1])
+                    return first_stop_valid and second_stop_valid
                 else:
-                    self._stop_idx_changed = False
-                    start = self._map.convert_to_grid_coord(start)
-                    pos = self._path[self._path_idx]
-                    return self._collision_free(self._map.get_binary_map(), start, pos)
+                    return first_stop_valid
         else:
             return False
 
@@ -204,6 +199,7 @@ class SearchBasedPlanner(Planner):
             binary_map[start[0], start[1]] = GridStatus.EMPTY
             if self._plan_algo(binary_map, start, target):
                 self._simplify_path()
+                self._path_idx_changed = True
                 self._path_idx = 0
                 return True
         else:
@@ -214,17 +210,13 @@ class SearchBasedPlanner(Planner):
             return False
     
     def next_stop(self) -> np.ndarray:
-        # we replanned, start and target are in the same postion
-        # keep returning the target position
-        if self._path.shape[0] == 1: 
-            self._path_idx = -1
-        # we replanned, and the simplified path is straight line from start to target
-        # and we have reached the end, keep outputting the target position
-        elif self._path.shape[0] == 2 and self._path_idx + 1 == 2:
+        # wstart and target are in the same postion
+        # or we have reached the end, keep outputting the target position
+        if self._path_idx + 1 >= self._path.shape[0]:
             self._path_idx -= 1
         # output the next stop, force a collision check next time we check path valid
         else:
-            self._stop_idx_changed = True
+            self._path_idx_changed = True
         return super().next_stop()
 
 
@@ -292,7 +284,7 @@ class A_Star_Planner(SearchBasedPlanner):
                     break
                 else:
                     pos = pred[pos[0], pos[1], :]
-        path = list(reversed(path))
+            path = list(reversed(path))
         self._path = np.array(path)
         return done
 
@@ -316,7 +308,7 @@ if __name__ == "__main__":
     E.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
 
     # MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
-    P = A_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=partial(get_n_grid_neighbors, n=3))
+    P = A_Star_Planner(xlim=(-10,100), ylim=(-10,100), res=1, neighbor_func=partial(get_n_grid_neighbors, n=3))
 
     results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=1/180*np.pi)
     P.update_environment(E.agent_position, results)

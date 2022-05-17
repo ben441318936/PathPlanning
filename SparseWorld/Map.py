@@ -179,12 +179,12 @@ if __name__ == "__main__":
     E.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
     E.add_obstacle(Obstacle(top=48,bottom=40,left=52,right=60))
 
-    results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=1/180*np.pi)
+    results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=5/180*np.pi)
 
     MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
     MAP.update_map(E.agent_position, results)
 
-    map = MAP.get_binary_map_safe(margin=2)
+    map = MAP.get_binary_map_safe(margin=1)
     # map = MAP._map
 
     map = np.rot90(map)
