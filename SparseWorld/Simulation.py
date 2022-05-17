@@ -109,16 +109,20 @@ class Simulation(object):
             self._planner.update_environment(estimated_pos, results)
 
             # plan a path
-            if not self._planner.path_valid():
+            if not self._planner.path_valid(estimated_pos):
+                print("Replanning")
                 if not self._planner.plan(estimated_pos, self.target):
                     print("Planning failed")
                     print("estimated pos", estimated_pos)
                     print("actual pos", self._environment.agent_position)
                     break
-                next_stop = self._planner.take_next_stop()
+                next_stop = self._planner.next_stop()
+            else:
+                if np.linalg.norm(estimated_pos - next_stop) < self._planner.map.resolution:
+                    next_stop = self._planner.next_stop()
+                    
 
-            if self._planner.path_valid() and np.linalg.norm(estimated_pos - next_stop) < self._planner.map.resolution:
-                next_stop =  self._planner.take_next_stop()
+            print("Next stop:", next_stop)
 
             # use state estimate to compute control action to next stop
             control_action = self._controller.control(estimated_state, next_stop)
@@ -262,10 +266,10 @@ if __name__ == "__main__":
     # Env.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
     # Env.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
 
-    # Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
+    Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
 
-    Env.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
-    Env.add_obstacle(Obstacle(top=48,bottom=40,left=52,right=60))
+    # Env.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
+    # Env.add_obstacle(Obstacle(top=48,bottom=40,left=52,right=60))
 
     # Env.agent_position = np.array([50,50])
 

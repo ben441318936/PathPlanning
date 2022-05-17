@@ -70,7 +70,7 @@ class OccupancyGrid(GridMap):
     An occupancy map based on evenly spaced discretization.
     '''
 
-    __slots__ = ("_res", "_n_cells", "_LOG_ODDS", "_LOG_ODDS_LIM")
+    __slots__ = ("_res", "_n_cells", "_LOG_ODDS", "_LOG_ODDS_LIM", "_old_map_valid", "_binary_map")
 
     def __init__(self, xlim=(-5, 5), ylim=(-5, 5), res=1, log_odds=np.log(4), log_odds_lim_factor=10) -> None:
         super().__init__(xlim, ylim)
@@ -81,6 +81,12 @@ class OccupancyGrid(GridMap):
         n_cells_y = int(np.ceil((ylim[1]-ylim[0]) / res + 1))
         self._n_cells = (n_cells_x, n_cells_y)
         self._map = np.zeros(self._n_cells) # need data type double to handle log odds
+        self._binary_map = np.zeros(self._n_cells, dtype=int)
+        self._old_map_valid = False
+
+    @property
+    def old_map_valid(self) -> bool:
+        return self._old_map_valid
 
     @property
     def shape(self) -> tuple:
@@ -112,11 +118,10 @@ class OccupancyGrid(GridMap):
         map_center = ((self._xlim[1] - self._xlim[0]) / 2, (self._ylim[1] - self._ylim[0]) / 2)
         center_cell = ((self._n_cells[0]-1)/2, (self._n_cells[1]-1)/2) # these are always ints
         offset = coord - center_cell
-        return self._res * coord
-
+        return self._res * offset + map_center
 
     def get_status(self, coord: np.ndarray) -> GridStatus:
-        return 1 * self._map[coord[0], coord[1]] > 0
+        return self._binary_map[coord[0], coord[1]]
 
     def update_map(self, scan_start: np.ndarray, scans: List[ScanResult]) -> None:
         # scans is N x (ang,rng)
@@ -142,13 +147,21 @@ class OccupancyGrid(GridMap):
             self._map[ray_xx, ray_yy] -= self._LOG_ODDS
         np.clip(self._map, -self._LOG_ODDS_LIM, self._LOG_ODDS_LIM, out=self._map)
 
-    def get_binary_map(self) -> np.ndarray:
+        new_binary_map = self._compute_binary_map()
+        self._old_map_valid = np.sum(self._binary_map != new_binary_map) == 0
+        if not self._old_map_valid:
+            self._binary_map = new_binary_map
+
+    def _compute_binary_map(self) -> np.ndarray:
         return 1 * (self._map > 0)
+
+    def get_binary_map(self) -> np.ndarray:
+        return self._binary_map
 
     def get_binary_map_safe(self, margin: int = 1) -> np.ndarray:
         binary_map = self.get_binary_map()
-        dilation(binary_map, square(int(margin*2+1)), out=binary_map)
-        return binary_map
+        binary_map_safe = dilation(binary_map, square(int(margin*2+1)))
+        return binary_map_safe
 
 
 

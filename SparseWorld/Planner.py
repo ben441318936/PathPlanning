@@ -23,8 +23,8 @@ class Planner(ABC):
     __slots__ = ("_path", "_path_idx")
 
     def __init__(self) -> None:
-        self._path = None
-        self._path_idx = None
+        self._path: np.ndarray = None
+        self._path_idx: int = None
 
     @property
     def path(self) -> np.ndarray:
@@ -53,15 +53,15 @@ class Planner(ABC):
         '''
         Return the next stop in the planned path.
         '''
-        return self._path[self._path_idx+1]
-
-    def take_next_stop(self) -> np.ndarray:
-        '''
-        Return the next stop, then advance the path idx.
-        '''
-        next_pos = self._path[self._path_idx+1]
         self._path_idx += 1
-        return next_pos
+        return self._path[self._path_idx]
+
+    def advance_path_idx(self) -> None:
+        '''
+        Advance the path index because we already reached the currnt stop.
+        '''
+        self._path_idx += 1
+
 
     @abstractmethod
     def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
@@ -118,13 +118,14 @@ class SearchBasedPlanner(Planner):
     '''
     Planner based on discretizing the environment and searching the resulting graph.
     '''
-    __slots__ = ("_map", "_neighbor_func", "_margin")
+    __slots__ = ("_map", "_neighbor_func", "_margin", "_stop_idx_changed")
 
     def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0) -> None:
         super().__init__()
-        self._map = OccupancyGrid(xlim=xlim, ylim=ylim, res=res)
+        self._map: OccupancyGrid = OccupancyGrid(xlim=xlim, ylim=ylim, res=res)
         self._neighbor_func = neighbor_func
-        self._margin = safety_margin
+        self._margin: int = np.ceil(safety_margin / self._map.resolution)
+        self._stop_idx_changed = False
 
     @property
     def map(self) -> OccupancyGrid:
@@ -134,34 +135,58 @@ class SearchBasedPlanner(Planner):
         return self._map.update_map(scan_start, scan_results)
 
     def next_stop(self) -> np.ndarray:
+        self._stop_idx_changed = True
         return self._map.convert_to_world_coord(super().next_stop())
 
-    def take_next_stop(self) -> np.ndarray:
-        return self._map.convert_to_world_coord(super().take_next_stop())
+    def _collision_free(self, map: np.ndarray, v1: np.ndarray, v2: np.ndarray) -> bool:
+        ray_xx, ray_yy = raytrace(v1[0], v1[1], v2[0], v2[1])
+        if np.sum(map[ray_xx, ray_yy] == GridStatus.OBSTACLE) == 0:
+            return True
+        else:
+            return False
 
-    def path_valid(self) -> bool:
+    def path_valid(self, start: np.ndarray) -> bool:
         if super().path_valid():
-            # self._path.shape[0] == 1 iff start and stop is the same in the planning algo
+            # self._path.shape[0] == 1 iff start and target is the same in the planning algo
+            # or we are trying to reach target in one stop
             if self._path.shape[0] == 1:
                 return True
-            elif self._path.shape[0] != 1 and self._path_idx+1 >= len(self._path):
+            elif self._path.shape[0] > 2 and self._path_idx+1 >= len(self._path):
                 # no more stops in current path
                 return False
             # path is longer than 1, we have more stops after, check straight line to next stop
             else:
-                start = self._path[self._path_idx]
-                pos = self._path[self._path_idx+1]
-                ray_xx, ray_yy = raytrace(start[0], start[1], pos[0], pos[1])
-                if np.sum(self._map.get_status(np.array([ray_xx, ray_yy])) == GridStatus.OBSTACLE) == 0:
+                if self._map.old_map_valid and not self._stop_idx_changed:
                     return True
                 else:
-                    return False
+                    self._stop_idx_changed = False
+                    start = self._map.convert_to_grid_coord(start)
+                    pos = self._path[self._path_idx]
+                    return self._collision_free(self._map.get_binary_map(), start, pos)
         else:
             return False
 
     @abstractmethod
     def _plan_algo(binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
         pass
+
+    def _simplify_path(self) -> None:
+        if self._path.shape[0] == 1:
+            return
+        simplified = []
+        i = 0
+        simplified.append(self._path[i])
+        while i < self._path.shape[0]:
+            for j in range(i+1, self._path.shape[0]):
+                if not self._collision_free(self._map.get_binary_map_safe(margin=self._margin), self._path[i], self._path[j]):
+                    simplified.append(self._path[j-1])
+                    i = j-1
+                    break
+            # we got to the end of path with no collision
+            if j+1 == self._path.shape[0]:
+                simplified.append(self._path[j])
+                break
+        self._path = np.array(simplified)
 
     def plan(self, start: np.ndarray, target: np.ndarray) -> bool:
         start = self._map.convert_to_grid_coord(start)
@@ -172,12 +197,13 @@ class SearchBasedPlanner(Planner):
         if self._margin == 0:
             binary_map = self._map.get_binary_map()
         else:
-            binary_map = self._map.get_binary_map_safe(margin = np.ceil(self._margin / self._map.resolution))
+            binary_map = self._map.get_binary_map_safe(margin = self._margin)
         # sometimes the safety margin grows into the starting location
         # but it is actually safe
         if self._map.get_status(start) == GridStatus.EMPTY:
             binary_map[start[0], start[1]] = GridStatus.EMPTY
             if self._plan_algo(binary_map, start, target):
+                self._simplify_path()
                 self._path_idx = 0
                 return True
         else:
@@ -186,6 +212,20 @@ class SearchBasedPlanner(Planner):
             print("Start map status:", self._map.get_status(start))
             print("Target:", target)
             return False
+    
+    def next_stop(self) -> np.ndarray:
+        # we replanned, start and target are in the same postion
+        # keep returning the target position
+        if self._path.shape[0] == 1: 
+            self._path_idx = -1
+        # we replanned, and the simplified path is straight line from start to target
+        # and we have reached the end, keep outputting the target position
+        elif self._path.shape[0] == 2 and self._path_idx + 1 == 2:
+            self._path_idx -= 1
+        # output the next stop, force a collision check next time we check path valid
+        else:
+            self._stop_idx_changed = True
+        return super().next_stop()
 
 
 class A_Star_Planner(SearchBasedPlanner):
@@ -195,9 +235,9 @@ class A_Star_Planner(SearchBasedPlanner):
 
     __slots__ = ("_eps", "_heuristic")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0, eps=1, heuristic=np.linalg.norm) -> None:
+    def __init__(self, xlim=(0,100), ylim=(0,100), res:float=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0, eps:int=1, heuristic=np.linalg.norm) -> None:
         super().__init__(xlim=xlim, ylim=ylim, res=res, neighbor_func=neighbor_func, safety_margin=safety_margin)
-        self._eps = eps
+        self._eps: int = eps
         self._heuristic = heuristic
 
     def _plan_algo(self, binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
@@ -256,15 +296,6 @@ class A_Star_Planner(SearchBasedPlanner):
         self._path = np.array(path)
         return done
 
-    def next_stop(self) -> np.ndarray:
-        if self._path.shape[0] == 1:
-            self._path_idx = -1    
-        return super().next_stop()
-    
-    def take_next_stop(self) -> np.ndarray:
-        if self._path.shape[0] == 1:
-            self._path_idx = -1
-        return super().take_next_stop()
     
 
     
@@ -275,7 +306,7 @@ if __name__ == "__main__":
     from Environment import Environment, Obstacle
 
     M = DifferentialDriveTorqueInput(sampling_period=0.1)
-    E = Environment(motion_model=M, target_position=np.array([90,50]))
+    E = Environment(motion_model=M, target_position=np.array([90,80]))
 
     E.agent_heading = 0
 
@@ -291,6 +322,8 @@ if __name__ == "__main__":
     P.update_environment(E.agent_position, results)
 
     P.plan(E.agent_position, E.target_position)
+
+    print(P._path)
 
     plt.figure()
     plt.plot(P.path[:,0], P.path[:,1])
