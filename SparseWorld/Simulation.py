@@ -13,7 +13,7 @@ from MotionModel import DifferentialDriveTorqueInput, DifferentialDriveVelocityI
 from Environment import Environment, Obstacle
 from Controller import Controller, PVelocityController, PVelocitySSTorqueController
 from Estimator import Estimator, WheelVelocityEstimator, PoseEstimator, FullStateEstimator
-from Planner import A_Star_Planner, Planner, SearchBasedPlanner, get_8_neighbors, get_n_grid_neighbors
+from Planner import A_Star_Planner, D_Star_Planner, Planner, SearchBasedPlanner, get_8_neighbors, get_n_grid_neighbors
 
 import pygame
 pygame.init()
@@ -110,7 +110,7 @@ class Simulation(object):
 
             # plan a path
             if not self._planner.path_valid(estimated_pos):
-                print("Replanning at", estimated_pos)
+                # print("Replanning at", estimated_pos)
                 if not self._planner.plan(estimated_pos, self.target):
                     print("Planning failed")
                     print("estimated pos", estimated_pos)
@@ -269,11 +269,12 @@ if __name__ == "__main__":
 
     # Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
 
-    Env.add_obstacle(Obstacle(top=60,bottom=52,left=52,right=60))
-    Env.add_obstacle(Obstacle(top=48,bottom=40,left=52,right=60))
-    Env.add_obstacle(Obstacle(top=60,left=65,bottom=40,right=70))
+    Env.add_obstacle(Obstacle(top=60,bottom=52,left=5,right=95))
+    # Env.add_obstacle(Obstacle(top=60,bottom=52,left=60,right=64))
+    Env.add_obstacle(Obstacle(top=48,bottom=40,left=5,right=95))
+    # Env.add_obstacle(Obstacle(top=60,left=64,bottom=40,right=70))
 
-    # Env.agent_position = np.array([50,50])
+    Env.agent_position = np.array([5,50])
 
     # Con = PVelocitySSTorqueController(Mot, KP_V=4, KP_W=100, max_rpm=60, Q=np.diag(np.array([1000,2000])), max_torque=100)
     Con = PVelocityController(Mot)
@@ -282,7 +283,9 @@ if __name__ == "__main__":
     # Est = WheelVelocityEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
     Est = PoseEstimator(Mot, input_noise_var)
 
-    Pla = A_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors, safety_margin=1)
+    # D* is more efficient if there is a lot of replanning
+    # Pla = A_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors, safety_margin=1)
+    Pla = D_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors, safety_margin=1)
 
     Sim = Simulation(environment=Env, controller=Con, estimator=Est, planner=Pla,
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,

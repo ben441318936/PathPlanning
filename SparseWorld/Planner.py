@@ -3,6 +3,8 @@ Implements different planning algorithms.
 '''
 
 from abc import ABC, abstractmethod
+from time import time
+from tracemalloc import stop
 import numpy as np
 from typing import List
 
@@ -111,14 +113,18 @@ class SearchBasedPlanner(Planner):
     '''
     Planner based on discretizing the environment and searching the resulting graph.
     '''
-    __slots__ = ("_map", "_neighbor_func", "_margin", "_path_idx_changed")
+    __slots__ = ("_map", "_neighbor_func", "_margin", "_path_idx_changed", "_total_planning_time")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0) -> None:
+    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors, safety_margin:int = 0) -> None:
         super().__init__()
         self._map: OccupancyGrid = OccupancyGrid(xlim=xlim, ylim=ylim, res=res)
         self._neighbor_func = neighbor_func
         self._margin: int = np.ceil(safety_margin / self._map.resolution)
         self._path_idx_changed = False
+        self._total_planning_time = 0
+
+    def __del__(self):
+        print("Total planning time", self._total_planning_time)
 
     @property
     def map(self) -> OccupancyGrid:
@@ -144,15 +150,13 @@ class SearchBasedPlanner(Planner):
             # no need to check for collision
             if self._map.old_map_valid and not self._path_idx_changed:
                 return True
-            # next stop is inf, something wrong from planning, force a replan
-            elif self._path_idx + 1 < self._path.shape[0] and np.sum(self._path[self._path_idx+1]) == np.inf:
-                return False
             else:
                 self._path_idx_changed = False
                 # check the line from current location to next stop
                 start = self._map.convert_to_grid_coord(start)
                 first_stop_valid = self._collision_free(self._map.get_binary_map(), start, self._path[self._path_idx])
-                # if one more stop is available, check it too
+                # checking the next next stop gives a better path
+                # but more frequent planning
                 if self._path_idx + 1 < self._path.shape[0]:
                     second_stop_valid = self._collision_free(self._map.get_binary_map(), self._path[self._path_idx], self._path[self._path_idx+1])
                     return first_stop_valid and second_stop_valid
@@ -162,10 +166,12 @@ class SearchBasedPlanner(Planner):
             return False
 
     @abstractmethod
-    def _plan_algo(binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
+    def _plan_algo(self, binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
+        # print("In _plan_algo", start, target)
         pass
 
-    def _simplify_path(self) -> None:
+    def _simplify_path(self, binary_map: np.ndarray) -> None:
+        # print("In _simplify_path")
         if self._path.shape[0] == 1:
             return
         simplified = []
@@ -173,7 +179,7 @@ class SearchBasedPlanner(Planner):
         simplified.append(self._path[i])
         while i < self._path.shape[0]:
             for j in range(i+1, self._path.shape[0]):
-                if not self._collision_free(self._map.get_binary_map_safe(margin=self._margin), self._path[i], self._path[j]):
+                if not self._collision_free(binary_map, self._path[i], self._path[j]):
                     simplified.append(self._path[j-1])
                     i = j-1
                     break
@@ -181,9 +187,17 @@ class SearchBasedPlanner(Planner):
             if j+1 == self._path.shape[0]:
                 simplified.append(self._path[j])
                 break
+            # somehow there is no collision free connections to the next stop
+            # likely because noise put us too close to the obstacle
+            # then just follow the next stop without simplifying
+            else:
+                simplified.append(self._path[i+1])
+                i += 1
         self._path = np.array(simplified)
 
     def plan(self, start: np.ndarray, target: np.ndarray) -> bool:
+        # print("In planning", start, target)
+        t = time()
         start = self._map.convert_to_grid_coord(start)
         target = self._map.convert_to_grid_coord(target)
         if start[0] == target[0] and start[1] == target[1]:
@@ -198,15 +212,21 @@ class SearchBasedPlanner(Planner):
         if self._map.get_status(start) == GridStatus.EMPTY:
             binary_map[start[0], start[1]] = GridStatus.EMPTY
             if self._plan_algo(binary_map, start, target):
-                self._simplify_path()
+                self._simplify_path(binary_map)
                 self._path_idx_changed = True
                 self._path_idx = 0
+                self._total_planning_time += time() - t
                 return True
+            else:
+                print("Failed to find a path")
+                print("Start:", start)
+                print("Start:", start)
+                return False
         else:
-            print("Planning failed with discrete cells")
+            print("Trying to plan starting from an occupied cell")
             print("Start:", start)
             print("Start map status:", self._map.get_status(start))
-            print("Target:", target)
+            print("Start:", start)
             return False
     
     def next_stop(self) -> np.ndarray:
@@ -227,12 +247,13 @@ class A_Star_Planner(SearchBasedPlanner):
 
     __slots__ = ("_eps", "_heuristic")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res:float=1, neighbor_func=get_n_grid_neighbors, safety_margin:int = 0, eps:int=1, heuristic=np.linalg.norm) -> None:
+    def __init__(self, xlim=(0,100), ylim=(0,100), res:float=1, neighbor_func=get_8_neighbors, safety_margin:int = 0, eps:int=1, heuristic=np.linalg.norm) -> None:
         super().__init__(xlim=xlim, ylim=ylim, res=res, neighbor_func=neighbor_func, safety_margin=safety_margin)
         self._eps: int = eps
         self._heuristic = heuristic
 
     def _plan_algo(self, binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
+        super()._plan_algo(binary_map, start, target)
         # Initialize the data structures
         # Labels
         g = np.ones(binary_map.shape) * np.inf
@@ -288,7 +309,226 @@ class A_Star_Planner(SearchBasedPlanner):
         self._path = np.array(path)
         return done
 
+
+class D_Star_Planner(SearchBasedPlanner):
+    '''
+    Planner that implements D* Lite.
+    More efficient when there is frequent replanning.
+    '''
+
+    __slots__ = ("_U", "_k_m", "_g", "_rhs", "_last_map_change_pos", "_pos", "_target", "_heuristic")
+
+    def __init__(self, xlim=(0, 100), ylim=(0, 100), res=1, neighbor_func=get_8_neighbors, safety_margin: int = 0, heuristic=np.linalg.norm) -> None:
+        super().__init__(xlim, ylim, res, neighbor_func, safety_margin)
+        self._heuristic = heuristic
+        self._init_search_structs()
+
+    def _init_search_structs(self):
+        self._U = pqdict({})
+        self._k_m = 0
+        self._g = np.ones(self._map.shape) * np.inf
+        self._rhs = np.ones(self._map.shape) * np.inf
+        self._pos = None # most recent planning start position
+        self._target = None
+        self._last_map_change_pos = None # position at which the last map change occurred
+
+    def _set_start_target(self, start: np.ndarray, target: np.ndarray) -> None:
+        if self._target is None:
+            self._target = target
+            self._rhs[tuple(self._target)] = 0
+            self._U[tuple(self._target)] = (self._heuristic(start - self._target), 0)
+        elif np.sum(self._target != target) != 0:
+            # target changed since we last performed a search
+            # reset all structures
+            self._init_search_structs()
+            self._target = target
+            self._rhs[tuple(self._target)] = 0
+            self._U[tuple(self._target)] = (self._heuristic(start - self._target), 0)
+        self._pos = start
+        if self._last_map_change_pos is None:
+            self._last_map_change_pos = start
+        
+    def _plan_algo(self, binary_map: np.ndarray, start: np.ndarray, target: np.ndarray) -> bool:
+        '''
+        Possible to generate incomplete paths with D*, i.e. paths that doesn't reach the target.
+        Such paths are [start, next, next, ..., inf]
+        '''
+        super()._plan_algo(binary_map, start, target)
+        self._set_start_target(start, target)
+        self._compute_shortest_path(binary_map)
+        if self._rhs[tuple(self._pos)] == np.inf:
+            if len(self._U) == 0:
+                # exhausted nodes to search
+                # however this could be due to problems with map change
+                # reset and search one more time
+                self._init_search_structs()
+                self._set_start_target(start, target)
+                self._compute_shortest_path(binary_map)
+        if self._rhs[tuple(self._pos)] == np.inf:
+            # could not find a path
+            self._path = np.array([])
+            return False
+        else:
+            incomplete_path = False
+            path_dict = {}
+            path = []
+            pos = self._pos
+            while True:
+                path.append(pos)
+                if tuple(pos) in path_dict:
+                    incomplete_path = True
+                    break
+                else:
+                    path_dict[tuple(pos)] = 1
+                if pos[0] == self._target[0] and pos[1] == self._target[1]:
+                    # found a complete path
+                    break
+                else:
+                    neighbors = self._neighbor_func(binary_map, tuple(pos))
+                    pos = neighbors[0].coord
+                    min_cost = neighbors[0].cost + self._g[neighbors[0].coord]
+                    for node in neighbors:
+                        if node.cost + self._g[node.coord] <= min_cost:
+                            min_cost = node.cost + self._g[node.coord]
+                            pos = node.coord
+                    pos = np.array(pos)
+
+            if incomplete_path:
+                # get just one next step
+                neighbors = self._neighbor_func(binary_map, tuple(self._pos))
+                pos = neighbors[0].coord
+                min_cost = neighbors[0].cost + self._g[neighbors[0].coord]
+                for node in neighbors:
+                    if node.cost + self._g[node.coord] <= min_cost:
+                        min_cost = node.cost + self._g[node.coord]
+                        pos = node.coord
+                pos = np.array(pos)
+                path = [self._pos, pos]
+
+            self._path = np.array(path)
+            return True
+
+    def _calculate_key(self, s: tuple) -> tuple:
+        return (min(self._g[s], self._rhs[s]) + self._heuristic(self._pos - np.array(s)) + self._k_m, min(self._g[s], self._rhs[s]))
+
+    def _update_vertex(self, u: tuple) -> None:
+        if self._g[u] != self._rhs[u]:
+            # updates if already in U
+            # inserts if not
+            self._U[u] = self._calculate_key(u)
+            # print("in update vertex:", u, self._U[u])
+        elif self._g[u] == self._rhs[u] and u in self._U:
+            del self._U[u]
     
+    def _compute_shortest_path(self, binary_map: np.ndarray) -> None:
+        # print("Started search from", tuple(self.pos), "to", tuple(self.target))
+        # k = 0
+        while len(self._U) != 0 and (self._U.topitem()[1] < self._calculate_key(tuple(self._pos)) or self._rhs[tuple(self._pos)] > self._g[tuple(self._pos)]):
+            # if len(self._U) > self.max_queue_size:
+            #     self.max_queue_size = len(self._U)
+                      
+            # k += 1
+            u = self._U.topitem()[0]
+            key_old = self._U.topitem()[1]
+            key_new = self._calculate_key(u)
+
+            # print("At iter", k, u, key_old, key_new, self._g[u], self._rhs[u])
+
+            if key_old < key_new:
+                self._U[u] = key_new
+            elif self._g[u] > self._rhs[u]:
+                self._g[u] = self._rhs[u]
+                u = self._U.popitem()[0]
+                vertices = self._neighbor_func(binary_map, u)
+                for s in vertices:
+                    if s.coord != tuple(self._target):
+                        self._rhs[s.coord] = min(self._rhs[s.coord], s.cost + self._g[u])
+                    self._update_vertex(s.coord)
+            else:
+                g_old = self._g[u]
+                self._g[u] = np.inf
+                vertices = self._neighbor_func(binary_map, u)
+                vertices.append(VertexInfo(u,0))
+                for s in vertices:
+                    if self._rhs[s.coord] == s.cost + g_old:
+                        if s.coord != tuple(self._target):
+                            self._rhs[s.coord] = min([v.cost + self._g[v.coord] for v in self._neighbor_func(binary_map, s.coord)])
+                    self._update_vertex(s.coord)
+
+    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+        # get a copy of the old map in order to check how the map changed later
+        # but we only do this if we know where the target is
+        # i.e. we have planned at least once
+        # otherwise all cost estimated are inf, no need to update
+        if self._target is not None:
+            if self._margin == 0:
+                old_map = self._map.get_binary_map()
+            else:
+                old_map = self._map.get_binary_map_safe(margin = self._margin)
+
+        # use parent function, propagates to the map object
+        super().update_environment(scan_start, scan_results)
+
+        # map object signals that the occupancy map has changed
+        if self._target is not None and not self._map.old_map_valid:
+            self._pos = self._map.convert_to_grid_coord(scan_start)
+            self._k_m += self._heuristic(self._pos - self._last_map_change_pos)
+            self._last_map_change_pos = self._pos
+
+            # get the changed cells
+            if self._margin == 0:
+                new_map = self._map.get_binary_map()
+            else:
+                new_map = self._map.get_binary_map_safe(margin = self._margin)
+            dif = new_map - old_map # -1, 0, 1
+            changed_idxs = np.nonzero(dif)
+
+            # for each changed vertex
+            for i in range(changed_idxs[0].shape[0]):
+                # the status of v changed
+                v = (changed_idxs[0][i], changed_idxs[1][i])
+                increased = dif[v] == 1
+                # first change the estimates for edges going from v to its neighbors
+                # we only need to change rhs here, since the costs are computed dynamically
+                # the updated map will correct future estimates
+                if increased:
+                    # v changed from empty cell to obstacle
+                    # v now has inf cost
+                    self._rhs[v] = np.inf
+                else:
+                    # v changed from obstacle -> empty cell
+                    # cost of v is min over all neighbors: (cost to go to neighbor z + cost from z to target)
+                    self._rhs[v] = min([z.cost + self._g[z.coord] for z in self._neighbor_func(new_map, v)])
+                # then change estimates for edges going from u to v
+                # u being the neighbors of v
+                u_s_old = self._neighbor_func(old_map, v)
+                u_s_new = self._neighbor_func(new_map, v)
+                for u_old, u_new in zip(u_s_old, u_s_new):
+                    u = u_old.coord
+                    if u != tuple(self._target):
+                        c_old = u_old.cost
+                        c_new = u_new.cost
+                        if c_old > c_new:
+                            # edge cost decreased, this means we corrected some obstacle positions
+                            self._rhs[u] = min(self._rhs[u], c_new + self._g[v])
+                        elif self._rhs[u] == c_old + self._g[v]:
+                            # we used v to reach u, since v changed, we adjust our estimates for u
+                            self._rhs[u] = min([z.cost + self._g[z.coord] for z in self._neighbor_func(new_map, u)])
+                        # edge cost from u to v increased, but we didn't use v to get to u, so no change
+                    self._update_vertex(u)
+
+    def _simplify_path(self, binary_map: np.ndarray) -> None:
+        super()._simplify_path(binary_map)
+        if np.sum(np.abs(self._path[-1] - self._target)) > 0:
+            self._path = np.vstack((self._path, self._target))
+
+
+
+    
+        
+
+
+
 
     
 if __name__ == "__main__":

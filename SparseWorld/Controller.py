@@ -69,7 +69,7 @@ class PVelocityController(Controller):
             # this will be needed if planner outputs straight line paths
             # make this value larger to let the robot move smoothly
             # which will be ok if we plan with some margin
-            if np.abs(heading_error) > 0.5:
+            if np.abs(heading_error) > 0.1:
                 v = 0 
             else:
                 v = self._KP_V * pos_error

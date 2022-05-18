@@ -124,6 +124,9 @@ class OccupancyGrid(GridMap):
         return self._binary_map[coord[0], coord[1]]
 
     def update_map(self, scan_start: np.ndarray, scans: List[ScanResult]) -> None:
+        '''
+        scan_start should be floating point world coordinates/
+        '''
         # scans is N x (ang,rng)
         angs = np.array([scan.angle for scan in scans]) 
         rngs = np.array([scan.range for scan in scans])
@@ -184,8 +187,8 @@ if __name__ == "__main__":
     MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
     MAP.update_map(E.agent_position, results)
 
-    map = MAP.get_binary_map_safe(margin=1)
-    # map = MAP._map
+    # map = MAP.get_binary_map_safe(margin=2)
+    map = MAP.get_binary_map()
 
     map = np.rot90(map)
 

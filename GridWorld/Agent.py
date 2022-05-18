@@ -512,11 +512,14 @@ class D_star_agent(Agent):
                     # then change estimates for edges going from u to v
                     # u being the neighbors of v
                     u_s = self.get_neighbors(tuple(v))
-                    c_olds = [self.get_cost_between_vertices(u.coord, tuple(v)) for u in u_s]
+                    # c_olds = [self.get_cost_between_vertices(u.coord, tuple(v)) for u in u_s]
+                    c_olds = [u.cost for u in u_s]
                     self._map[tuple(v)] = MapStatus.OBSTACLE
-                    for u, c_old in zip(u_s, c_olds):
+                    u_s_new = self.get_neighbors(tuple(v))
+                    c_news = [u.cost for u in u_s_new]
+                    for u, c_old, c_new in zip(u_s, c_olds, c_news):
                         if u.coord != tuple(self.target):
-                            c_new = self.get_cost_between_vertices(u.coord, tuple(v))
+                            # c_new = self.get_cost_between_vertices(u.coord, tuple(v))
                             if c_old > c_new:
                                 # edge cost decreaed, won't happen in current sim assumptions
                                 self._rhs[u.coord] = min(self._rhs[u.coord], c_new + self._g[tuple(v)])
