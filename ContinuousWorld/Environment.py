@@ -109,7 +109,7 @@ class Environment():
 
     @property
     def agent_pose(self) -> np.ndarray:
-        self._motion_model.state_2_pose(self._agent_state)
+        return self._motion_model.state_2_pose(self._agent_state)
 
     @agent_pose.setter
     def agent_pose(self, pose: np.ndarray) -> bool:
@@ -213,17 +213,18 @@ class Environment():
         '''
         results = []
         num_points = int((angle_range[1] - angle_range[0]) / resolution)
+        raw_angles = np.linspace(angle_range[0], angle_range[1], num_points, endpoint=True)
         angles = np.linspace(angle_range[0], angle_range[1], num_points, endpoint=True) + self.agent_heading
         cone_ends = np.array([max_range * np.cos(angles), max_range * np.sin(angles)]).T
         for i in range(angles.shape[0]):
             ray = np.array([self.agent_position, self.agent_position + cone_ends[i,:]])
             int_points = self.ray_intersect_obstacles(ray)
             if len(int_points) == 0:
-                results.append(ScanResult(angles[i], np.inf))
+                results.append(ScanResult(raw_angles[i], np.inf))
             else:
                 int_points = np.array(int_points)
                 ranges = np.linalg.norm(int_points - self.agent_position, axis=1)
-                results.append(ScanResult(angles[i], np.amin(ranges)))
+                results.append(ScanResult(raw_angles[i], np.amin(ranges)))
         return results
 
 

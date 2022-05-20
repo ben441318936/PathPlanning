@@ -2,6 +2,8 @@ from collections import namedtuple
 from unittest import result
 import numpy as np
 
+from Map import OccupancyGrid
+
 np.set_printoptions(precision=2, suppress=True)
 import sys
 
@@ -104,13 +106,14 @@ class Simulation(object):
             # get state estimate
             estimated_state = self._estimator.estimate
             estimated_pos = self._environment.motion_model.state_2_position(estimated_state)
+            estimated_pose = self._environment.motion_model.state_2_pose(estimated_state)
 
             results = self._environment.scan_cone(angle_range=(-np.pi, np.pi), max_range=5, resolution=5/180*np.pi)
-            self._planner.update_environment(estimated_pos, results)
+            self._planner.update_environment(estimated_pose, results)
 
             # plan a path
             if not self._planner.path_valid(estimated_pos):
-                # print("Replanning at", estimated_pos)
+                print("Replanning:", "estimate", estimated_pose, "true", self._environment.agent_pose)
                 if not self._planner.plan(estimated_pos, self.target):
                     print("Planning failed")
                     print("estimated pos", estimated_pos)
@@ -256,7 +259,7 @@ class Simulation(object):
 
 if __name__ == "__main__":
 
-    input_noise_var = np.diag(np.array([0.1,0.01]))
+    input_noise_var = np.diag(np.array([0.1,0.01]))*0
     encoder_noise_var = 0.005*np.eye(2)
 
     # Mot = DifferentialDriveTorqueInput(sampling_period=0.01)
@@ -269,10 +272,10 @@ if __name__ == "__main__":
 
     # Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
 
-    Env.add_obstacle(Obstacle(top=60,bottom=52,left=5,right=95))
+    Env.add_obstacle(Obstacle(top=60,bottom=52,left=5,right=40))
     # Env.add_obstacle(Obstacle(top=60,bottom=52,left=60,right=64))
-    Env.add_obstacle(Obstacle(top=48,bottom=40,left=5,right=95))
-    # Env.add_obstacle(Obstacle(top=60,left=64,bottom=40,right=70))
+    Env.add_obstacle(Obstacle(top=48,bottom=40,left=5,right=40))
+    Env.add_obstacle(Obstacle(top=70,left=50,bottom=40,right=70))
 
     Env.agent_position = np.array([5,50])
 
@@ -283,9 +286,12 @@ if __name__ == "__main__":
     # Est = WheelVelocityEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
     Est = PoseEstimator(Mot, input_noise_var)
 
+    Map = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
+
+    Pla = A_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
+
     # D* is more efficient if there is a lot of replanning
-    # Pla = A_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors, safety_margin=1)
-    Pla = D_Star_Planner(xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors, safety_margin=1)
+    # Pla = D_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
 
     Sim = Simulation(environment=Env, controller=Con, estimator=Est, planner=Pla,
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,

@@ -9,8 +9,15 @@ for state and parameter extraction.
 '''
 
 from abc import ABC, abstractmethod
+from typing import List
+
 import numpy as np
 np.set_printoptions(precision=5, suppress=True)
+
+from Environment import ScanResult
+
+from Map import OccupancyGrid, raytrace
+
 import control
 
 from MotionModel import MotionModel, DifferentialDriveTorqueToVelocity, DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
@@ -123,8 +130,9 @@ class PoseEstimator(Estimator):
     __slots__ = ("_map", "_velocity_cov", "_particles", "_num_particles")
 
     def __init__(self, motion_model: DifferentialDriveVelocityInput, velocity_cov: np.ndarray = None, num_particles: int = 10) -> None:
-        self._velocity_cov = velocity_cov
-        self._num_particles = num_particles
+        self._velocity_cov: np.ndarray = velocity_cov
+        self._num_particles: int = num_particles
+        # self._map: OccupancyGrid = map
         
         super().__init__(motion_model) # calls init_estimator
         self._motion_model = motion_model # for linting typing
@@ -150,6 +158,32 @@ class PoseEstimator(Estimator):
 
     def update(self, observation) -> None:
         return
+
+    def _compute_scan_correlation(self, scan_start: np.ndarray, scan_results: List[ScanResult]):
+        '''
+        Computes the correlation between the scan results and the current map
+        '''
+        corr = 0
+        ray_start = self._map.convert_to_grid_coord(scan_start)
+        # scans is N x (ang,rng)
+        angs = np.array([scan.angle for scan in scan_results]) 
+        rngs = np.array([scan.range for scan in scan_results])
+        # process those that got finite range, i.e. hit an obstacle
+        angs_hit = angs[rngs<np.inf].reshape((-1,1)) # (N,1)
+        rngs_hit = rngs[rngs<np.inf].reshape((-1,1)) # (N,1)
+        endpoints = scan_start + rngs_hit * np.hstack((np.cos(angs_hit), np.sin(angs_hit))) # (N,2)
+        for i in range(endpoints.shape[0]):
+            endpoint = endpoints[i,:]
+            endpoint = self._map.convert_to_grid_coord(endpoint)
+            ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
+            # for obstacle, positive map status is correct
+            corr += self._map.get_status(ray_xx[-1], ray_yy[-1])
+            # for empty space, negative map status is correct
+            corr += np.sum(-1 * self._map.get_status(ray_xx[0:-1], ray_yy[0:-1]))
+        return corr
+
+
+
 
 
 class FullStateEstimator(Estimator):
@@ -471,8 +505,8 @@ def test_full_estimator(init_state=np.array([50,50,0,0,0]), goal_pos=np.array([5
 
 
 if __name__ == "__main__":
-    test_wheel_velocity_estimator()
-    # test_pose_estimator()
+    # test_wheel_velocity_estimator()
+    test_pose_estimator()
     # test_full_estimator()
     
 

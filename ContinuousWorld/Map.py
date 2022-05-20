@@ -123,22 +123,33 @@ class OccupancyGrid(GridMap):
     def get_status(self, coord: np.ndarray) -> GridStatus:
         return self._binary_map[coord[0], coord[1]]
 
-    def update_map(self, scan_start: np.ndarray, scans: List[ScanResult]) -> None:
+    def update_map(self, scan_pose: np.ndarray, scans: List[ScanResult], max_range: int = 5) -> None:
         '''
-        scan_start should be floating point world coordinates/
+        scan_pose should be floating point world coordinates
+        corresponding to the pose of the robot when the LIDAR was done
         '''
+        ray_start = self.convert_to_grid_coord(scan_pose[0:2])
+        center_heading = scan_pose[2]
+
         # scans is N x (ang,rng)
-        angs = np.array([scan.angle for scan in scans]) 
+        angs = np.array([scan.angle for scan in scans]) + center_heading
         rngs = np.array([scan.range for scan in scans])
 
-        # discord those that did not get a LIDAR return
-        angs = angs[rngs<np.inf].reshape((-1,1)) # (N,1)
-        rngs = rngs[rngs<np.inf].reshape((-1,1)) # (N,1)
+        # process those that got inf range, i.e. did not hit an obstacle at all
+        angs_inf = angs[rngs == np.inf].reshape((-1,1)) # (N,1)
 
-        endpoints = scan_start + rngs * np.hstack((np.cos(angs), np.sin(angs))) # (N,2)
+        endpoints = ray_start + max_range * np.hstack((np.cos(angs_inf), np.sin(angs_inf))) # (N,2)
+        for i in range(endpoints.shape[0]):
+            endpoint = endpoints[i,:]
+            endpoint = self.convert_to_grid_coord(endpoint)
+            ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
+            self._map[ray_xx, ray_yy] -= self._LOG_ODDS
 
-        ray_start = self.convert_to_grid_coord(scan_start)
+        # process those that got finite range, i.e. hit an obstacle
+        angs_hit = angs[rngs<np.inf].reshape((-1,1)) # (N,1)
+        rngs_hit = rngs[rngs<np.inf].reshape((-1,1)) # (N,1)
 
+        endpoints = scan_pose[0:2] + rngs_hit * np.hstack((np.cos(angs_hit), np.sin(angs_hit))) # (N,2)
         for i in range(endpoints.shape[0]):
             endpoint = endpoints[i,:]
             endpoint = self.convert_to_grid_coord(endpoint)
@@ -148,6 +159,7 @@ class OccupancyGrid(GridMap):
             ray_xx = ray_xx[0:-1]
             ray_yy = ray_yy[0:-1]
             self._map[ray_xx, ray_yy] -= self._LOG_ODDS
+
         np.clip(self._map, -self._LOG_ODDS_LIM, self._LOG_ODDS_LIM, out=self._map)
 
         new_binary_map = self._compute_binary_map()

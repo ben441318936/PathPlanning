@@ -113,18 +113,20 @@ class SearchBasedPlanner(Planner):
     '''
     Planner based on discretizing the environment and searching the resulting graph.
     '''
-    __slots__ = ("_map", "_neighbor_func", "_margin", "_path_idx_changed", "_total_planning_time")
+    __slots__ = ("_map", "_neighbor_func", "_margin", "_path_idx_changed", "_total_planning_time", "_total_update_time")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res=1, neighbor_func=get_8_neighbors, safety_margin:int = 0) -> None:
+    def __init__(self, map, neighbor_func=get_8_neighbors, safety_margin:int = 0) -> None:
         super().__init__()
-        self._map: OccupancyGrid = OccupancyGrid(xlim=xlim, ylim=ylim, res=res)
+        self._map: OccupancyGrid = map
         self._neighbor_func = neighbor_func
         self._margin: int = np.ceil(safety_margin / self._map.resolution)
         self._path_idx_changed = False
         self._total_planning_time = 0
+        self._total_update_time = 0
 
     def __del__(self):
         print("Total planning time", self._total_planning_time)
+        print("Total update time", self._total_update_time)
 
     @property
     def map(self) -> OccupancyGrid:
@@ -155,6 +157,7 @@ class SearchBasedPlanner(Planner):
                 # check the line from current location to next stop
                 start = self._map.convert_to_grid_coord(start)
                 first_stop_valid = self._collision_free(self._map.get_binary_map(), start, self._path[self._path_idx])
+                # return first_stop_valid
                 # checking the next next stop gives a better path
                 # but more frequent planning
                 if self._path_idx + 1 < self._path.shape[0]:
@@ -172,16 +175,18 @@ class SearchBasedPlanner(Planner):
 
     def _simplify_path(self, binary_map: np.ndarray) -> None:
         # print("In _simplify_path")
-        if self._path.shape[0] == 1:
-            return
         simplified = []
         i = 0
         simplified.append(self._path[i])
         while i < self._path.shape[0]:
             for j in range(i+1, self._path.shape[0]):
                 if not self._collision_free(binary_map, self._path[i], self._path[j]):
-                    simplified.append(self._path[j-1])
-                    i = j-1
+                    if j-2 >= i+1:
+                        simplified.append(self._path[j-2])
+                        i = j-2
+                    else:
+                        simplified.append(self._path[j-1])
+                        i = j-1
                     break
             # we got to the end of path with no collision
             if j+1 == self._path.shape[0]:
@@ -197,7 +202,6 @@ class SearchBasedPlanner(Planner):
 
     def plan(self, start: np.ndarray, target: np.ndarray) -> bool:
         # print("In planning", start, target)
-        t = time()
         start = self._map.convert_to_grid_coord(start)
         target = self._map.convert_to_grid_coord(target)
         if start[0] == target[0] and start[1] == target[1]:
@@ -211,11 +215,13 @@ class SearchBasedPlanner(Planner):
         # but it is actually safe
         if self._map.get_status(start) == GridStatus.EMPTY:
             binary_map[start[0], start[1]] = GridStatus.EMPTY
+            t = time()
             if self._plan_algo(binary_map, start, target):
-                self._simplify_path(binary_map)
+                self._total_planning_time += time() - t
+                # print("Raw path:", self._path)
+                # self._simplify_path(binary_map)
                 self._path_idx_changed = True
                 self._path_idx = 0
-                self._total_planning_time += time() - t
                 return True
             else:
                 print("Failed to find a path")
@@ -247,8 +253,8 @@ class A_Star_Planner(SearchBasedPlanner):
 
     __slots__ = ("_eps", "_heuristic")
 
-    def __init__(self, xlim=(0,100), ylim=(0,100), res:float=1, neighbor_func=get_8_neighbors, safety_margin:int = 0, eps:int=1, heuristic=np.linalg.norm) -> None:
-        super().__init__(xlim=xlim, ylim=ylim, res=res, neighbor_func=neighbor_func, safety_margin=safety_margin)
+    def __init__(self, map, neighbor_func=get_8_neighbors, safety_margin:int = 0, eps:int=1, heuristic=np.linalg.norm) -> None:
+        super().__init__(map, neighbor_func=neighbor_func, safety_margin=safety_margin)
         self._eps: int = eps
         self._heuristic = heuristic
 
@@ -309,6 +315,12 @@ class A_Star_Planner(SearchBasedPlanner):
         self._path = np.array(path)
         return done
 
+    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+        t = time()
+        res = super().update_environment(scan_start, scan_results)
+        self._total_update_time += time() - t
+        return res
+
 
 class D_Star_Planner(SearchBasedPlanner):
     '''
@@ -318,8 +330,8 @@ class D_Star_Planner(SearchBasedPlanner):
 
     __slots__ = ("_U", "_k_m", "_g", "_rhs", "_last_map_change_pos", "_pos", "_target", "_heuristic")
 
-    def __init__(self, xlim=(0, 100), ylim=(0, 100), res=1, neighbor_func=get_8_neighbors, safety_margin: int = 0, heuristic=np.linalg.norm) -> None:
-        super().__init__(xlim, ylim, res, neighbor_func, safety_margin)
+    def __init__(self, map, neighbor_func=get_8_neighbors, safety_margin: int = 0, heuristic=np.linalg.norm) -> None:
+        super().__init__(map, neighbor_func, safety_margin)
         self._heuristic = heuristic
         self._init_search_structs()
 
@@ -333,6 +345,7 @@ class D_Star_Planner(SearchBasedPlanner):
         self._last_map_change_pos = None # position at which the last map change occurred
 
     def _set_start_target(self, start: np.ndarray, target: np.ndarray) -> None:
+        self._pos = start
         if self._target is None:
             self._target = target
             self._rhs[tuple(self._target)] = 0
@@ -344,7 +357,6 @@ class D_Star_Planner(SearchBasedPlanner):
             self._target = target
             self._rhs[tuple(self._target)] = 0
             self._U[tuple(self._target)] = (self._heuristic(start - self._target), 0)
-        self._pos = start
         if self._last_map_change_pos is None:
             self._last_map_change_pos = start
         
@@ -385,13 +397,9 @@ class D_Star_Planner(SearchBasedPlanner):
                     break
                 else:
                     neighbors = self._neighbor_func(binary_map, tuple(pos))
-                    pos = neighbors[0].coord
-                    min_cost = neighbors[0].cost + self._g[neighbors[0].coord]
-                    for node in neighbors:
-                        if node.cost + self._g[node.coord] <= min_cost:
-                            min_cost = node.cost + self._g[node.coord]
-                            pos = node.coord
-                    pos = np.array(pos)
+                    coords = [z.coord for z in neighbors]
+                    total_cost = np.array([z.cost + self._g[z.coord] for z in neighbors])
+                    pos = np.array(coords[np.argmin(total_cost)])
 
             if incomplete_path:
                 # get just one next step
@@ -456,6 +464,7 @@ class D_Star_Planner(SearchBasedPlanner):
                     self._update_vertex(s.coord)
 
     def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+        t = time()
         # get a copy of the old map in order to check how the map changed later
         # but we only do this if we know where the target is
         # i.e. we have planned at least once
@@ -471,7 +480,7 @@ class D_Star_Planner(SearchBasedPlanner):
 
         # map object signals that the occupancy map has changed
         if self._target is not None and not self._map.old_map_valid:
-            self._pos = self._map.convert_to_grid_coord(scan_start)
+            self._pos = self._map.convert_to_grid_coord(scan_start[0:2])
             self._k_m += self._heuristic(self._pos - self._last_map_change_pos)
             self._last_map_change_pos = self._pos
 
@@ -516,6 +525,7 @@ class D_Star_Planner(SearchBasedPlanner):
                             self._rhs[u] = min([z.cost + self._g[z.coord] for z in self._neighbor_func(new_map, u)])
                         # edge cost from u to v increased, but we didn't use v to get to u, so no change
                     self._update_vertex(u)
+        self._total_update_time += time() - t
 
     def _simplify_path(self, binary_map: np.ndarray) -> None:
         super()._simplify_path(binary_map)
