@@ -1,5 +1,4 @@
 from collections import namedtuple
-from unittest import result
 import numpy as np
 
 from Map import OccupancyGrid
@@ -109,6 +108,7 @@ class Simulation(object):
             estimated_pose = self._environment.motion_model.state_2_pose(estimated_state)
 
             results = self._environment.scan_cone(angle_range=(-np.pi, np.pi), max_range=5, resolution=5/180*np.pi)
+            self._planner.map.update_map(estimated_pose, results)
             self._planner.update_environment(estimated_pose, results)
 
             # plan a path
@@ -288,10 +288,10 @@ if __name__ == "__main__":
 
     Map = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
 
-    Pla = A_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
+    # Pla = A_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
 
     # D* is more efficient if there is a lot of replanning
-    # Pla = D_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
+    Pla = D_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
 
     Sim = Simulation(environment=Env, controller=Con, estimator=Est, planner=Pla,
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,

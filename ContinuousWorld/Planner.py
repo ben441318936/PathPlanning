@@ -59,7 +59,7 @@ class Planner(ABC):
         return self._path[self._path_idx]
 
     @abstractmethod
-    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+    def update_environment(self, observation_pose: np.ndarray, scan_results: List[ScanResult]) -> None:
         '''
         Updates the planner's version of the environment.
         Could be updating a map or a list of obstacles/landmarks.
@@ -113,11 +113,12 @@ class SearchBasedPlanner(Planner):
     '''
     Planner based on discretizing the environment and searching the resulting graph.
     '''
-    __slots__ = ("_map", "_neighbor_func", "_margin", "_path_idx_changed", "_total_planning_time", "_total_update_time")
+    __slots__ = ("_map", "_binary_map", "_neighbor_func", "_margin", "_path_idx_changed", "_total_planning_time", "_total_update_time")
 
     def __init__(self, map, neighbor_func=get_8_neighbors, safety_margin:int = 0) -> None:
         super().__init__()
         self._map: OccupancyGrid = map
+        self._binary_map: np.ndarray = self._map.get_binary_map()
         self._neighbor_func = neighbor_func
         self._margin: int = np.ceil(safety_margin / self._map.resolution)
         self._path_idx_changed = False
@@ -133,7 +134,10 @@ class SearchBasedPlanner(Planner):
         return self._map
 
     def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
-        return self._map.update_map(scan_start, scan_results)
+        '''
+        The map will handle actual changes to the environment. Planner just adjust the search structures if needed.
+        '''
+        return None
 
     def next_stop(self) -> np.ndarray:
         self._stop_idx_changed = True
@@ -315,11 +319,6 @@ class A_Star_Planner(SearchBasedPlanner):
         self._path = np.array(path)
         return done
 
-    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
-        t = time()
-        res = super().update_environment(scan_start, scan_results)
-        self._total_update_time += time() - t
-        return res
 
 
 class D_Star_Planner(SearchBasedPlanner):
@@ -465,21 +464,11 @@ class D_Star_Planner(SearchBasedPlanner):
 
     def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
         t = time()
-        # get a copy of the old map in order to check how the map changed later
-        # but we only do this if we know where the target is
-        # i.e. we have planned at least once
-        # otherwise all cost estimated are inf, no need to update
-        if self._target is not None:
-            if self._margin == 0:
-                old_map = self._map.get_binary_map()
-            else:
-                old_map = self._map.get_binary_map_safe(margin = self._margin)
-
-        # use parent function, propagates to the map object
-        super().update_environment(scan_start, scan_results)
-
-        # map object signals that the occupancy map has changed
+        # if target is set, i.e. we planned before, check for map changes and change estimates
+        # otherwise all costs are still inf, no updates
         if self._target is not None and not self._map.old_map_valid:
+            old_map = self._binary_map
+
             self._pos = self._map.convert_to_grid_coord(scan_start[0:2])
             self._k_m += self._heuristic(self._pos - self._last_map_change_pos)
             self._last_map_change_pos = self._pos
@@ -525,6 +514,10 @@ class D_Star_Planner(SearchBasedPlanner):
                             self._rhs[u] = min([z.cost + self._g[z.coord] for z in self._neighbor_func(new_map, u)])
                         # edge cost from u to v increased, but we didn't use v to get to u, so no change
                     self._update_vertex(u)
+            self._binary_map = new_map
+        else:
+            # set our copy of the map to the most updated
+            self._binary_map = self._map.get_binary_map()
         self._total_update_time += time() - t
 
     def _simplify_path(self, binary_map: np.ndarray) -> None:

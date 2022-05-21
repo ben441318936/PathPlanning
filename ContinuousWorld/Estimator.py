@@ -43,12 +43,15 @@ class Estimator(ABC):
 
     # predict the next state using known input and motion model
     @abstractmethod
-    def predict(self, control_input) -> None:
+    def predict(self, control_input: dict) -> None:
         pass
 
     # update the current state using latest observation
     @abstractmethod
-    def update(self, observation) -> None:
+    def update(self, observation: dict) -> None:
+        '''
+        Observation is a dictionary containing data from different sensors.
+        '''
         pass
 
     # extract the most probable state for control use
@@ -111,11 +114,12 @@ class WheelVelocityEstimator(Estimator):
         self._L = np.array(self._L)
         self._P = np.array(self._P)
 
-    def predict(self, control_input) -> None:
+    def predict(self, control_input: dict) -> None:
         self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
 
-    def update(self, observation) -> None:
-        self._estimate_state = self._estimate_state + self._L @ (observation - self._motion_model.state_2_wheel_velocity(self._estimate_state))
+    def update(self, observation: dict) -> None:
+        if "encoder" in observation:
+            self._estimate_state = self._estimate_state + self._L @ (observation["enocder"] - self._motion_model.state_2_wheel_velocity(self._estimate_state))
 
 
 class PoseEstimator(Estimator):
@@ -147,7 +151,7 @@ class PoseEstimator(Estimator):
         # creates a set of particles centered around the init_state
         self._particles = np.tile(init_state, (self._num_particles,1))
         
-    def predict(self, control_input) -> None:
+    def predict(self, control_input: dict) -> None:
         self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
         # predict particles
         v_w_noise = np.random.multivariate_normal(np.zeros((self._motion_model.input_dim)), self._velocity_cov, self._num_particles)
@@ -156,7 +160,7 @@ class PoseEstimator(Estimator):
         control_inputs["w"] = control_inputs["w"] + v_w_noise[:,1]
         self._particles = self._motion_model.step(self._particles, control_inputs)
 
-    def update(self, observation) -> None:
+    def update(self, observation: dict) -> None:
         return
 
     def _compute_scan_correlation(self, scan_start: np.ndarray, scan_results: List[ScanResult]):
@@ -181,9 +185,6 @@ class PoseEstimator(Estimator):
             # for empty space, negative map status is correct
             corr += np.sum(-1 * self._map.get_status(ray_xx[0:-1], ray_yy[0:-1]))
         return corr
-
-
-
 
 
 class FullStateEstimator(Estimator):
@@ -234,17 +235,17 @@ class FullStateEstimator(Estimator):
     def P(self):
         return self._wheel_velocity_estimator.P
 
-    def predict(self, control_input) -> None:
+    def predict(self, control_input: dict) -> None:
         # predict wheel speed
         self._wheel_velocity_estimator.predict(control_input)
         # predict full state
         self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
         self._estimate_state[3:5] = self._wheel_velocity_estimator.estimate
 
-    def update(self, observation) -> None:
+    def update(self, observation: dict) -> None:
         # update wheel speed
         self._wheel_velocity_estimator.update(observation)
-        # update full state
+        # update pose
         self._estimate_state[3:5] = self._wheel_velocity_estimator.estimate
 
 

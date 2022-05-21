@@ -197,14 +197,24 @@ if __name__ == "__main__":
     results = E.scan_cone(angle_range=(-np.pi/2, np.pi/2), max_range=5, resolution=5/180*np.pi)
 
     MAP = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
-    MAP.update_map(E.agent_position, results)
+
+    map = MAP.get_binary_map()
+    map1 = map
+
+    MAP.update_map(E.agent_pose, results)
 
     # map = MAP.get_binary_map_safe(margin=2)
     map = MAP.get_binary_map()
 
     map = np.rot90(map)
+    map1 = np.rot90(map1)
 
+    plt.figure("updated")
     plt.imshow(map, cmap="gray")
+
+    plt.figure("old")
+    plt.imshow(map1, cmap="gray")
+
     plt.show()
 
     # plt.figure()

@@ -14,6 +14,7 @@ from MotionModel import MotionModel
 from Controller import Controller
 from Planner import Planner
 from Estimator import Estimator
+from Map import OccupancyGrid
 
 class Agent(ABC):
 
@@ -53,6 +54,10 @@ class Agent(ABC):
         return self._estimator.estimate
 
     @property
+    def pose(self) -> np.ndarray:
+        return self._motion_model.state_2_pose(self.state)
+
+    @property
     def target(self) -> np.ndarray:
         return self._target_position
 
@@ -71,13 +76,40 @@ class Agent(ABC):
         return c
 
     def reached_target(self, tol: float = 0.5) -> bool:
-        return np.linalg.norm(self._motion_model.state_2_position(self.state) - self.target)
+        return np.linalg.norm(self._motion_model.state_2_position(self.state) - self.target) < tol
 
     @abstractmethod
-    def process_observation(self, observation) -> None:
+    def process_observation(self, observation: dict) -> None:
         # this depends on the representation of the environment
         # as well as the type of estimation and observation
         pass
+
+class OccupancyGridAgent(Agent):
+    '''
+    An agent that uses an occupancy grid to record the environment.
+    '''
+
+    __slots__ = "_map"
+
+    def __init__(self, motion_model: MotionModel, planner: Planner, controller: Controller, estimator: Estimator, map: OccupancyGrid) -> None:
+        super().__init__(motion_model, planner, controller, estimator)
+        self._map: OccupancyGrid = map
+
+    @property
+    def binary_map(self) -> np.ndarray:
+        return self._map.get_binary_map()
+
+    def process_observation(self, observation: dict) -> None:
+        # update our state estimates using observations before making updates to our map and planner
+        self._estimator.update(observation)
+        if "LIDAR" in observation:
+            self._map.update_map(self.pose, observation["LIDAR"])
+            self._planner.update_environment(self.pose, observation["LIDAR"])
+
+if __name__ == "__name__":
+    pass
+        
+
 
 
 
