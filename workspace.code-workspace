@@ -4,7 +4,7 @@
 			"path": "GridWorld"
 		},
 		{
-			"path": "SparseWorld"
+			"path": "ContinuousWorld"
 		}
 	],
 	"settings": {}
