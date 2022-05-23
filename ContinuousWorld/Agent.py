@@ -58,6 +58,10 @@ class Agent(ABC):
         return self._motion_model.state_2_pose(self.state)
 
     @property
+    def position(self) -> np.ndarray:
+        return self._motion_model.state_2_position(self.state)
+
+    @property
     def target(self) -> np.ndarray:
         return self._target_position
 
@@ -65,18 +69,23 @@ class Agent(ABC):
         self._estimator.init_estimator(state)
 
     def set_target_position(self, target_pos: np.ndarray = None) -> None:
+        if self.target is not None and np.sum(np.abs(target_pos - self.target)) == 0:
+            self._current_stop = None
         self._target_position = target_pos
 
-    def control(self) -> dict:
-        if self._current_stop is None:
-            self._planner.plan(self.state, self.target)
+
+    def control(self, tol: float = 0.5) -> dict:
+        if self._current_stop is None or not self._planner.path_valid(self.position):
+            self._planner.plan(self.position, self.target)
+            self._current_stop = self._planner.next_stop()
+        elif np.linalg.norm(self.position - self._current_stop) < tol:
             self._current_stop = self._planner.next_stop()
         c = self._controller.control(self.state, self._current_stop)
         self._estimator.predict(c)
         return c
 
     def reached_target(self, tol: float = 0.5) -> bool:
-        return np.linalg.norm(self._motion_model.state_2_position(self.state) - self.target) < tol
+        return np.linalg.norm(self.position - self.target) < tol
 
     @abstractmethod
     def process_observation(self, observation: dict) -> None:
@@ -89,22 +98,54 @@ class OccupancyGridAgent(Agent):
     An agent that uses an occupancy grid to record the environment.
     '''
 
-    __slots__ = "_map"
+    __slots__ = ("_map", "_scan_angular_range", "_scan_angles", "_scan_resolution", "_scan_max_range")
 
-    def __init__(self, motion_model: MotionModel, planner: Planner, controller: Controller, estimator: Estimator, map: OccupancyGrid) -> None:
+    def __init__(self, motion_model: MotionModel, planner: Planner, controller: Controller, estimator: Estimator, map: OccupancyGrid, 
+                 scan_angular_range: tuple = (-np.pi, np.pi), scan_resolution: float = 5/180*np.pi, scan_max_range: float = 5) -> None:
         super().__init__(motion_model, planner, controller, estimator)
         self._map: OccupancyGrid = map
+        self._scan_angular_range: tuple = scan_angular_range
+        self._scan_resolution: float = scan_resolution
+        self._scan_max_range: float = scan_max_range
+        self._init_scan_angles() # this sets self._scan_angles
+
+    def _init_scan_angles(self) -> None:
+        num_points = int(np.ceil((self._scan_angular_range[1] - self._scan_angular_range[0]) / self._scan_resolution))
+        self._scan_angles = np.linspace(self._scan_angular_range[0], self._scan_angular_range[1], num_points, endpoint=True)
 
     @property
     def binary_map(self) -> np.ndarray:
         return self._map.get_binary_map()
 
+    @property
+    def scan_angular_range(self) -> tuple:
+        return self._scan_angular_range
+
+    @property
+    def scan_angles(self) -> np.ndarray:
+        return self._scan_angles
+
+    @property
+    def scan_resolution(self) -> float:
+        return self._scan_resolution
+
+    @property
+    def scan_max_range(self) -> float:
+        return self._scan_max_range
+
+    def control(self, tol: float = 0.5) -> dict:
+        return super().control(min([tol, self._map.resolution]))
+
+    def reached_target(self, tol: float = 0.5) -> bool:
+        return super().reached_target(min([tol, self._map.resolution]))
+
     def process_observation(self, observation: dict) -> None:
         # update our state estimates using observations before making updates to our map and planner
         self._estimator.update(observation)
         if "LIDAR" in observation:
-            self._map.update_map(self.pose, observation["LIDAR"])
+            self._map.update_map(self.pose, observation["LIDAR"], self._scan_max_range)
             self._planner.update_environment(self.pose, observation["LIDAR"])
+
 
 if __name__ == "__name__":
     pass

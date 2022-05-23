@@ -118,8 +118,8 @@ class WheelVelocityEstimator(Estimator):
         self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
 
     def update(self, observation: dict) -> None:
-        if "encoder" in observation:
-            self._estimate_state = self._estimate_state + self._L @ (observation["enocder"] - self._motion_model.state_2_wheel_velocity(self._estimate_state))
+        if "ENCODER" in observation:
+            self._estimate_state = self._estimate_state + self._L @ (observation["ENCODER"] - self._motion_model.state_2_wheel_velocity(self._estimate_state))
 
 
 class PoseEstimator(Estimator):

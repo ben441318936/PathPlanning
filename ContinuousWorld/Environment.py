@@ -206,7 +206,26 @@ class Environment():
                 int_points.append(result.endpoint)
         return int_points
 
-    def scan_cone(self, angle_range: tuple = (0,2*np.pi), max_range=1, resolution=5/180*np.pi) -> List[ScanResult]:
+    def scan_cone(self, scan_angles: np.ndarray, max_range: float) -> List[ScanResult]:
+        '''
+        0 radian is the heading of the agent.
+        Output is a list of ScanResults (angle, range) measurements
+        '''
+        results = []
+        angles = scan_angles + self.agent_heading
+        cone_ends = np.array([max_range * np.cos(angles), max_range * np.sin(angles)]).T
+        for i in range(angles.shape[0]):
+            ray = np.array([self.agent_position, self.agent_position + cone_ends[i,:]])
+            int_points = self.ray_intersect_obstacles(ray)
+            if len(int_points) == 0:
+                results.append(ScanResult(scan_angles[i], np.inf))
+            else:
+                int_points = np.array(int_points)
+                ranges = np.linalg.norm(int_points - self.agent_position, axis=1)
+                results.append(ScanResult(scan_angles[i], np.amin(ranges)))
+        return results
+
+    def _scan_cone(self, angle_range: tuple = (0,2*np.pi), max_range=1, resolution=5/180*np.pi) -> List[ScanResult]:
         '''
         0 radian is the heading of the agent.
         Output is a list of ScanResults (angle, range) measurements

@@ -174,9 +174,12 @@ class OccupancyGrid(GridMap):
         return self._binary_map
 
     def get_binary_map_safe(self, margin: int = 1) -> np.ndarray:
-        binary_map = self.get_binary_map()
-        binary_map_safe = dilation(binary_map, square(int(margin*2+1)))
-        return binary_map_safe
+        if margin == 0:
+            return self.get_binary_map()
+        else:
+            binary_map = self.get_binary_map()
+            binary_map_safe = dilation(binary_map, square(int(margin*2+1)))
+            return binary_map_safe
 
 
 

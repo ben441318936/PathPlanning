@@ -118,9 +118,9 @@ class SearchBasedPlanner(Planner):
     def __init__(self, map, neighbor_func=get_8_neighbors, safety_margin:int = 0) -> None:
         super().__init__()
         self._map: OccupancyGrid = map
-        self._binary_map: np.ndarray = self._map.get_binary_map()
-        self._neighbor_func = neighbor_func
         self._margin: int = np.ceil(safety_margin / self._map.resolution)
+        self._binary_map : np.ndarray = self._map.get_binary_map_safe(margin = self._margin)
+        self._neighbor_func = neighbor_func
         self._path_idx_changed = False
         self._total_planning_time = 0
         self._total_update_time = 0
@@ -137,7 +137,8 @@ class SearchBasedPlanner(Planner):
         '''
         The map will handle actual changes to the environment. Planner just adjust the search structures if needed.
         '''
-        return None
+        if not self._map.old_map_valid:
+            self._binary_map = self._map.get_binary_map_safe(margin = self._margin)
 
     def next_stop(self) -> np.ndarray:
         self._stop_idx_changed = True
@@ -160,12 +161,12 @@ class SearchBasedPlanner(Planner):
                 self._path_idx_changed = False
                 # check the line from current location to next stop
                 start = self._map.convert_to_grid_coord(start)
-                first_stop_valid = self._collision_free(self._map.get_binary_map(), start, self._path[self._path_idx])
+                first_stop_valid = self._collision_free(self._binary_map, start, self._path[self._path_idx])
                 # return first_stop_valid
                 # checking the next next stop gives a better path
                 # but more frequent planning
                 if self._path_idx + 1 < self._path.shape[0]:
-                    second_stop_valid = self._collision_free(self._map.get_binary_map(), self._path[self._path_idx], self._path[self._path_idx+1])
+                    second_stop_valid = self._collision_free(self._binary_map, self._path[self._path_idx], self._path[self._path_idx+1])
                     return first_stop_valid and second_stop_valid
                 else:
                     return first_stop_valid
@@ -211,16 +212,16 @@ class SearchBasedPlanner(Planner):
         if start[0] == target[0] and start[1] == target[1]:
             self._path = np.array([start])
             return True
-        if self._margin == 0:
-            binary_map = self._map.get_binary_map()
-        else:
-            binary_map = self._map.get_binary_map_safe(margin = self._margin)
+        # if self._margin == 0:
+        #     binary_map = self._map.get_binary_map()
+        # else:
+        #     binary_map = self._map.get_binary_map_safe(margin = self._margin)
         # sometimes the safety margin grows into the starting location
         # but it is actually safe
         if self._map.get_status(start) == GridStatus.EMPTY:
-            binary_map[start[0], start[1]] = GridStatus.EMPTY
+            self._binary_map[start[0], start[1]] = GridStatus.EMPTY
             t = time()
-            if self._plan_algo(binary_map, start, target):
+            if self._plan_algo(self._binary_map, start, target):
                 self._total_planning_time += time() - t
                 # print("Raw path:", self._path)
                 # self._simplify_path(binary_map)
@@ -318,6 +319,12 @@ class A_Star_Planner(SearchBasedPlanner):
             path = list(reversed(path))
         self._path = np.array(path)
         return done
+
+    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+        t = time()
+        super().update_environment(scan_start, scan_results)
+        self._total_update_time += time() - t
+        return
 
 
 
@@ -478,6 +485,7 @@ class D_Star_Planner(SearchBasedPlanner):
                 new_map = self._map.get_binary_map()
             else:
                 new_map = self._map.get_binary_map_safe(margin = self._margin)
+            new_map[self._pos[0], self._pos[1]] = GridStatus.EMPTY
             dif = new_map - old_map # -1, 0, 1
             changed_idxs = np.nonzero(dif)
 
@@ -516,8 +524,7 @@ class D_Star_Planner(SearchBasedPlanner):
                     self._update_vertex(u)
             self._binary_map = new_map
         else:
-            # set our copy of the map to the most updated
-            self._binary_map = self._map.get_binary_map()
+            super().update_environment(scan_start, scan_results)
         self._total_update_time += time() - t
 
     def _simplify_path(self, binary_map: np.ndarray) -> None:
