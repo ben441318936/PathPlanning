@@ -73,11 +73,13 @@ class Agent(ABC):
             self._current_stop = None
         self._target_position = target_pos
 
-
     def control(self, tol: float = 0.5) -> dict:
         if self._current_stop is None or not self._planner.path_valid(self.position):
-            self._planner.plan(self.position, self.target)
-            self._current_stop = self._planner.next_stop()
+            if self._planner.plan(self.position, self.target):
+                self._current_stop = self._planner.next_stop()
+            else:
+                print("Couldn't plan a path from", self.position, "to", self.target)
+                exit()
         elif np.linalg.norm(self.position - self._current_stop) < tol:
             self._current_stop = self._planner.next_stop()
         c = self._controller.control(self.state, self._current_stop)
@@ -141,9 +143,11 @@ class OccupancyGridAgent(Agent):
 
     def process_observation(self, observation: dict) -> None:
         # update our state estimates using observations before making updates to our map and planner
+        if "LIDAR" in observation:
+            observation["LIDAR"] = {"SCANS": observation["LIDAR"], "MAX_RANGE": self._scan_max_range}
         self._estimator.update(observation)
         if "LIDAR" in observation:
-            self._map.update_map(self.pose, observation["LIDAR"], self._scan_max_range)
+            self._map.update_map(self.pose, observation["LIDAR"])
             self._planner.update_environment(self.pose, observation["LIDAR"])
 
 

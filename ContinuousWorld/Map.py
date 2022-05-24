@@ -123,11 +123,14 @@ class OccupancyGrid(GridMap):
     def get_status(self, coord: np.ndarray) -> GridStatus:
         return self._binary_map[coord[0], coord[1]]
 
-    def update_map(self, scan_pose: np.ndarray, scans: List[ScanResult], max_range: int = 5) -> None:
+    def update_map(self, scan_pose: np.ndarray, LIDAR_data: dict) -> None:
         '''
         scan_pose should be floating point world coordinates
         corresponding to the pose of the robot when the LIDAR was done
         '''
+        scans: List[ScanResult] = LIDAR_data["SCANS"]
+        max_range: float = LIDAR_data["MAX_RANGE"]
+
         ray_start = self.convert_to_grid_coord(scan_pose[0:2])
         center_heading = scan_pose[2]
 
@@ -138,7 +141,7 @@ class OccupancyGrid(GridMap):
         # process those that got inf range, i.e. did not hit an obstacle at all
         angs_inf = angs[rngs == np.inf].reshape((-1,1)) # (N,1)
 
-        endpoints = ray_start + max_range * np.hstack((np.cos(angs_inf), np.sin(angs_inf))) # (N,2)
+        endpoints = scan_pose[0:2] + max_range * np.hstack((np.cos(angs_inf), np.sin(angs_inf))) # (N,2)
         for i in range(endpoints.shape[0]):
             endpoint = endpoints[i,:]
             endpoint = self.convert_to_grid_coord(endpoint)

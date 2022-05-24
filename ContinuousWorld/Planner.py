@@ -59,7 +59,7 @@ class Planner(ABC):
         return self._path[self._path_idx]
 
     @abstractmethod
-    def update_environment(self, observation_pose: np.ndarray, scan_results: List[ScanResult]) -> None:
+    def update_environment(self, observation_pose: np.ndarray, LIDAR_data: dict) -> None:
         '''
         Updates the planner's version of the environment.
         Could be updating a map or a list of obstacles/landmarks.
@@ -133,12 +133,13 @@ class SearchBasedPlanner(Planner):
     def map(self) -> OccupancyGrid:
         return self._map
 
-    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+    def update_environment(self, observation_pose: np.ndarray, LIDAR_data: dict) -> None:
         '''
         The map will handle actual changes to the environment. Planner just adjust the search structures if needed.
         '''
         if not self._map.old_map_valid:
             self._binary_map = self._map.get_binary_map_safe(margin = self._margin)
+        return super().update_environment(observation_pose, LIDAR_data)
 
     def next_stop(self) -> np.ndarray:
         self._stop_idx_changed = True
@@ -231,13 +232,13 @@ class SearchBasedPlanner(Planner):
             else:
                 print("Failed to find a path")
                 print("Start:", start)
-                print("Start:", start)
+                print("Target:", target)
                 return False
         else:
             print("Trying to plan starting from an occupied cell")
             print("Start:", start)
+            print("Target:", target)
             print("Start map status:", self._map.get_status(start))
-            print("Start:", start)
             return False
     
     def next_stop(self) -> np.ndarray:
@@ -248,7 +249,7 @@ class SearchBasedPlanner(Planner):
         # output the next stop, force a collision check next time we check path valid
         else:
             self._path_idx_changed = True
-        return super().next_stop()
+        return self._map.convert_to_world_coord(super().next_stop())
 
 
 class A_Star_Planner(SearchBasedPlanner):
@@ -320,12 +321,11 @@ class A_Star_Planner(SearchBasedPlanner):
         self._path = np.array(path)
         return done
 
-    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+    def update_environment(self, observation_pose: np.ndarray, LIDAR_data: dict) -> None:
         t = time()
-        super().update_environment(scan_start, scan_results)
+        super().update_environment(observation_pose, LIDAR_data)
         self._total_update_time += time() - t
         return
-
 
 
 class D_Star_Planner(SearchBasedPlanner):
@@ -469,14 +469,14 @@ class D_Star_Planner(SearchBasedPlanner):
                             self._rhs[s.coord] = min([v.cost + self._g[v.coord] for v in self._neighbor_func(binary_map, s.coord)])
                     self._update_vertex(s.coord)
 
-    def update_environment(self, scan_start: np.ndarray, scan_results: List[ScanResult]) -> None:
+    def update_environment(self, observation_pose: np.ndarray, LIDAR_data: dict) -> None:
         t = time()
         # if target is set, i.e. we planned before, check for map changes and change estimates
         # otherwise all costs are still inf, no updates
         if self._target is not None and not self._map.old_map_valid:
             old_map = self._binary_map
 
-            self._pos = self._map.convert_to_grid_coord(scan_start[0:2])
+            self._pos = self._map.convert_to_grid_coord(observation_pose[0:2])
             self._k_m += self._heuristic(self._pos - self._last_map_change_pos)
             self._last_map_change_pos = self._pos
 
@@ -524,7 +524,7 @@ class D_Star_Planner(SearchBasedPlanner):
                     self._update_vertex(u)
             self._binary_map = new_map
         else:
-            super().update_environment(scan_start, scan_results)
+            super().update_environment(observation_pose, LIDAR_data)
         self._total_update_time += time() - t
 
     def _simplify_path(self, binary_map: np.ndarray) -> None:

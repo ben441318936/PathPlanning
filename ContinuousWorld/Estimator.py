@@ -133,10 +133,10 @@ class PoseEstimator(Estimator):
 
     __slots__ = ("_map", "_velocity_cov", "_particles", "_num_particles")
 
-    def __init__(self, motion_model: DifferentialDriveVelocityInput, velocity_cov: np.ndarray = None, num_particles: int = 10) -> None:
+    def __init__(self, motion_model: DifferentialDriveVelocityInput, map: OccupancyGrid, velocity_cov: np.ndarray = None, num_particles: int = 10) -> None:
+        self._map: OccupancyGrid = map
         self._velocity_cov: np.ndarray = velocity_cov
         self._num_particles: int = num_particles
-        # self._map: OccupancyGrid = map
         
         super().__init__(motion_model) # calls init_estimator
         self._motion_model = motion_model # for linting typing
@@ -148,7 +148,7 @@ class PoseEstimator(Estimator):
         # spread_cov = np.diag(np.array([10,10,0.02]))
         # spread = np.random.multivariate_normal(spread_mean, spread_cov, self._num_particles)
 
-        # creates a set of particles centered around the init_state
+        # creates a set of particles at the init_state
         self._particles = np.tile(init_state, (self._num_particles,1))
         
     def predict(self, control_input: dict) -> None:
@@ -161,30 +161,49 @@ class PoseEstimator(Estimator):
         self._particles = self._motion_model.step(self._particles, control_inputs)
 
     def update(self, observation: dict) -> None:
-        return
+        if "LIDAR" in observation:
+            corrs = self._compute_scan_correlations(observation["LIDAR"])
+            self._estimate_state = self._particles[np.argmax(corrs),:]
 
-    def _compute_scan_correlation(self, scan_start: np.ndarray, scan_results: List[ScanResult]):
-        '''
-        Computes the correlation between the scan results and the current map
-        '''
-        corr = 0
-        ray_start = self._map.convert_to_grid_coord(scan_start)
+    def _compute_scan_correlations(self, LIDAR_data: dict) -> np.ndarray:
+        scans: List[ScanResult] = LIDAR_data["SCANS"]
+        scan_max_range: float = LIDAR_data["MAX_RANGE"]
+
         # scans is N x (ang,rng)
-        angs = np.array([scan.angle for scan in scan_results]) 
-        rngs = np.array([scan.range for scan in scan_results])
-        # process those that got finite range, i.e. hit an obstacle
+        angs = np.array([scan.angle for scan in scans])
+        rngs = np.array([scan.range for scan in scans])
+
+        # process those that got inf range, i.e. did not hit an obstacle at all
+        angs_inf = angs[rngs == np.inf].reshape((-1,1)) # (N,1)
+
+         # process those that got finite range, i.e. hit an obstacle
         angs_hit = angs[rngs<np.inf].reshape((-1,1)) # (N,1)
         rngs_hit = rngs[rngs<np.inf].reshape((-1,1)) # (N,1)
-        endpoints = scan_start + rngs_hit * np.hstack((np.cos(angs_hit), np.sin(angs_hit))) # (N,2)
-        for i in range(endpoints.shape[0]):
-            endpoint = endpoints[i,:]
-            endpoint = self._map.convert_to_grid_coord(endpoint)
-            ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
-            # for obstacle, positive map status is correct
-            corr += self._map.get_status(ray_xx[-1], ray_yy[-1])
-            # for empty space, negative map status is correct
-            corr += np.sum(-1 * self._map.get_status(ray_xx[0:-1], ray_yy[0:-1]))
-        return corr
+
+        corrs = np.zeros((self._num_particles))
+
+        for i in range(self._num_particles):
+            scan_pose = self._motion_model.state_2_pose(self._particles[i,:])
+            ray_start = self._map.convert_to_grid_coord(scan_pose[0:2])
+            center_angle = scan_pose[2]
+
+            endpoints = scan_pose[0:2] + scan_max_range * np.hstack((np.cos(angs_inf+center_angle), np.sin(angs_inf+center_angle))) # (N,2)
+            for j in range(endpoints.shape[0]):
+                endpoint = endpoints[j,:]
+                endpoint = self._map.convert_to_grid_coord(endpoint)
+                ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
+                # for empty space, negative map status is correct
+                corrs[i] += np.sum(-1 * self._map.get_status((ray_xx, ray_yy)))
+
+            endpoints = scan_pose[0:2] + rngs_hit * np.hstack((np.cos(angs_hit+center_angle), np.sin(angs_hit+center_angle))) # (N,2)
+            for j in range(endpoints.shape[0]):
+                endpoint = endpoints[j,:]
+                endpoint = self._map.convert_to_grid_coord(endpoint)
+                ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
+                # for obstacle, positive map status is correct
+                corrs[i] += self._map.get_status((ray_xx[-1], ray_yy[-1]))
+                # for empty space, negative map status is correct
+                corrs[i] += np.sum(-1 * self._map.get_status((ray_xx[0:-1], ray_yy[0:-1])))
 
 
 class FullStateEstimator(Estimator):
@@ -213,9 +232,9 @@ class FullStateEstimator(Estimator):
 
     __slots__ = ("_wheel_velocity_estimator", "_pose_estimator")
 
-    def __init__(self, motion_model: DifferentialDriveTorqueInput, QN=np.eye(2), RN=np.eye(2)) -> None:
+    def __init__(self, motion_model: DifferentialDriveTorqueInput, map: OccupancyGrid, QN=np.eye(2), RN=np.eye(2), ) -> None:
         self._wheel_velocity_estimator = WheelVelocityEstimator(motion_model.torque_to_velocity_submodel, QN=QN, RN=RN)
-        self._pose_estimator = PoseEstimator(motion_model.velocity_input_submodel, velocity_cov=self._wheel_velocity_estimator.P)
+        self._pose_estimator = PoseEstimator(map, motion_model.velocity_input_submodel, velocity_cov=self._wheel_velocity_estimator.P)
 
         super().__init__(motion_model) # calls init_estimator
         self._motion_model = motion_model # for linting typing
@@ -243,7 +262,6 @@ class FullStateEstimator(Estimator):
         self._estimate_state[3:5] = self._wheel_velocity_estimator.estimate
 
     def update(self, observation: dict) -> None:
-        # update wheel speed
         self._wheel_velocity_estimator.update(observation)
         # update pose
         self._estimate_state[3:5] = self._wheel_velocity_estimator.estimate
