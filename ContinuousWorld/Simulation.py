@@ -12,7 +12,7 @@ from functools import partial
 
 from MotionModel import DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 from Environment import Environment, Obstacle
-from Controller import Controller, PVelocityController, PVelocitySSTorqueController
+from Controller import Controller, PLinearSSTorqueController, PVelocityController, PVelocitySSTorqueController
 from Estimator import Estimator, WheelVelocityEstimator, PoseEstimator, FullStateEstimator
 from Planner import A_Star_Planner, D_Star_Planner, Planner, SearchBasedPlanner, get_8_neighbors, get_n_grid_neighbors
 from Agent import OccupancyGrid, OccupancyGridAgent
@@ -97,7 +97,7 @@ class Simulation(object):
             # get observations
             obs = {}
             obs["LIDAR"] = self._environment.scan_cone(self._agent.scan_angles, self._agent.scan_max_range)
-            # obs["ENCODER"] = self._environment.agent_wheel_velocity + np.random.multivariate_normal(np.zeros((self._encoder_noise_var.shape[0],)), self._encoder_noise_var, size=None)
+            obs["ENCODER"] = self._environment.agent_wheel_velocity + np.random.multivariate_normal(np.zeros((self._encoder_noise_var.shape[0],)), self._encoder_noise_var, size=None)
             self._agent.process_observation(obs)
 
             # get control action from agent
@@ -224,38 +224,40 @@ if __name__ == "__main__":
     input_noise_var = np.diag(np.array([0.1,0.01]))*0
     encoder_noise_var = 0.005*np.eye(2)
 
-    # Mot = DifferentialDriveTorqueInput(sampling_period=0.01)
-    Mot = DifferentialDriveVelocityInput(sampling_period=0.01)
-
-    Env = Environment(motion_model=Mot, target_position=np.array([90,80]))
-    # E.agent_heading = np.pi/4
-    # Env.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
-    # Env.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
-
-    # Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
-
-    Env.add_obstacle(Obstacle(top=60,bottom=53,left=5,right=40))
-    # Env.add_obstacle(Obstacle(top=60,bottom=52,left=60,right=64))
-    Env.add_obstacle(Obstacle(top=48,bottom=40,left=5,right=40))
-    Env.add_obstacle(Obstacle(top=70,left=50,bottom=40,right=70))
-
-    Env.agent_position = np.array([5,50])
-
-    # Con = PVelocitySSTorqueController(Mot, KP_V=4, KP_W=100, max_rpm=60, Q=np.diag(np.array([1000,2000])), max_torque=100)
-    Con = PVelocityController(Mot)
-
-    # Est = FullStateEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
+    # torque input
+    Mot = DifferentialDriveTorqueInput(sampling_period=0.01)
+    Con = PVelocitySSTorqueController(Mot, KP_V=4, KP_W=20, max_rpm=60, Q=np.diag(np.array([1000,2000])), max_torque=100)
+    # Con = PLinearSSTorqueController(Mot, KP_V=4, max_rpm=60, Q=np.diag(np.array([100,100,0.01])), max_torque=100)
+    Est = FullStateEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
     # Est = WheelVelocityEstimator(Mot, QN=input_noise_var, RN=encoder_noise_var)
-    Est = PoseEstimator(Mot, input_noise_var)
+
+    # velocity input
+    # Mot = DifferentialDriveVelocityInput(sampling_period=0.01)
+    # Con = PVelocityController(Mot)
+    # Est = PoseEstimator(Mot, input_noise_var)
 
     Map = OccupancyGrid(xlim=(0,100), ylim=(0,100), res=1)
-
+    
     # Pla = A_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
 
     # D* is more efficient if there is a lot of replanning
     Pla = D_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
 
     Age = OccupancyGridAgent(Mot, Pla, Con, Est, Map)
+
+    Env = Environment(motion_model=Mot, target_position=np.array([10,50]))
+    # E.agent_heading = np.pi/4
+    # Env.add_obstacle(Obstacle(top=20,bottom=10,left=40,right=50))
+    # Env.add_obstacle(Obstacle(top=70,bottom=60,left=10,right=70))
+
+    # Env.add_obstacle(Obstacle(top=60,left=53,bottom=40,right=70))
+
+    # Env.add_obstacle(Obstacle(top=60,bottom=53,left=5,right=40))
+    # Env.add_obstacle(Obstacle(top=60,bottom=52,left=60,right=64))
+    # Env.add_obstacle(Obstacle(top=48,bottom=40,left=5,right=40))
+    # Env.add_obstacle(Obstacle(top=70,left=50,bottom=40,right=70))
+
+    Env.agent_position = np.array([50,50])
 
     Sim = Simulation(environment=Env, agent=Age,
                      input_noise_var=input_noise_var, encoder_noise_var=encoder_noise_var,

@@ -241,7 +241,7 @@ class DifferentialDriveTorqueToVelocity(MotionModel):
         return ("T_R", "T_L")
 
     def create_input_dict(self, *inputs) -> dict:
-        # takes two, T_R, T_l
+        # takes two, T_R, T_L
         return {name: inp for (name, inp) in zip(self.input_names, inputs)}
 
     def step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
@@ -450,7 +450,7 @@ class DifferentialDriveTorqueInput(MotionModel):
         return self._torque_to_velocity_submodel.input_names
         
     def create_input_dict(self, *inputs) -> dict:
-        return self._torque_to_velocity_submodel.create_input_dict(inputs)
+        return self._torque_to_velocity_submodel.create_input_dict(*inputs)
 
     def step(self, state: np.ndarray, input_dict: dict) -> np.ndarray:
         '''
