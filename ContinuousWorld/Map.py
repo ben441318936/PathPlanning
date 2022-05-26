@@ -80,7 +80,7 @@ class OccupancyGrid(GridMap):
         n_cells_x = int(np.ceil((xlim[1]-xlim[0]) / res + 1))
         n_cells_y = int(np.ceil((ylim[1]-ylim[0]) / res + 1))
         self._n_cells = (n_cells_x, n_cells_y)
-        self._map = np.zeros(self._n_cells) # need data type double to handle log odds
+        self._map = np.zeros(self._n_cells, dtype=np.double) # need data type double to handle log odds
         self._binary_map = np.zeros(self._n_cells, dtype=int)
         self._old_map_valid = False
 
@@ -139,14 +139,14 @@ class OccupancyGrid(GridMap):
         rngs = np.array([scan.range for scan in scans])
 
         # process those that got inf range, i.e. did not hit an obstacle at all
-        angs_inf = angs[rngs == np.inf].reshape((-1,1)) # (N,1)
+        # angs_inf = angs[rngs == np.inf].reshape((-1,1)) # (N,1)
 
-        endpoints = scan_pose[0:2] + max_range * np.hstack((np.cos(angs_inf), np.sin(angs_inf))) # (N,2)
-        for i in range(endpoints.shape[0]):
-            endpoint = endpoints[i,:]
-            endpoint = self.convert_to_grid_coord(endpoint)
-            ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
-            self._map[ray_xx, ray_yy] -= self._LOG_ODDS
+        # endpoints = scan_pose[0:2] + max_range * np.hstack((np.cos(angs_inf), np.sin(angs_inf))) # (N,2)
+        # for i in range(endpoints.shape[0]):
+        #     endpoint = endpoints[i,:]
+        #     endpoint = self.convert_to_grid_coord(endpoint)
+        #     ray_xx, ray_yy = raytrace(ray_start[0], ray_start[1], endpoint[0], endpoint[1])
+        #     self._map[ray_xx, ray_yy] -= self._LOG_ODDS
 
         # process those that got finite range, i.e. hit an obstacle
         angs_hit = angs[rngs<np.inf].reshape((-1,1)) # (N,1)

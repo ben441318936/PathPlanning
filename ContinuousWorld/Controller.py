@@ -51,7 +51,7 @@ class PVelocityController(Controller):
         self._KP_V = KP_V
         self._KP_W = KP_W
 
-    def control(self, curr_pose: np.ndarray, goal_pos: np.ndarray) -> dict:
+    def control(self, curr_pose: np.ndarray, goal_pos: np.ndarray, tol: float = 0.3) -> dict:
         curr_pos = self._motion_model.state_2_position(curr_pose)
         curr_heading = self._motion_model.state_2_heading(curr_pose)
         curr_heading = np.arctan2(np.sin(curr_heading), np.cos(curr_heading))
@@ -60,7 +60,7 @@ class PVelocityController(Controller):
         # outer loop, set reference v and w based on position and heading error
         pos_error = np.linalg.norm(goal_pos - curr_pos)
         # if close enough, don't move
-        if pos_error < 0.5:
+        if pos_error < tol:
             v, w = 0.0, 0.0
         else:
             heading_error = np.arctan2(np.sin(goal_heading-curr_heading), np.cos(goal_heading-curr_heading))

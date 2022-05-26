@@ -1,7 +1,7 @@
 from collections import namedtuple
 import numpy as np
 
-from Map import OccupancyGrid
+from Map import GridStatus, OccupancyGrid
 
 np.set_printoptions(precision=2, suppress=True)
 import sys
@@ -9,6 +9,8 @@ import sys
 from time import time
 
 from functools import partial
+
+from PIL import Image
 
 from MotionModel import DifferentialDriveTorqueInput, DifferentialDriveVelocityInput
 from Environment import Environment, Obstacle
@@ -31,11 +33,11 @@ class Simulation(object):
     def __init__(self, environment: Environment = None, agent: OccupancyGridAgent = None,
                  input_noise_var: np.ndarray=None, encoder_noise_var: np.ndarray=None,
                  render=False, window_size=None, FPS=None, render_offset=(0,0,0,0), center_col_width=0) -> None:
-        self._render = render
-        self._window_size = window_size
-        self._FPS = FPS
-        self._render_offset = render_offset # (top,bottom,left,right)
-        self._center_col_width = center_col_width
+        self._render: bool = render
+        self._window_size: tuple = window_size
+        self._FPS: int = FPS
+        self._render_offset: Offset = render_offset # (top,bottom,left,right)
+        self._center_col_width: int = center_col_width
         self._environment : Environment = environment
         self._agent : OccupancyGridAgent = agent
         self._input_noise_var : np.ndarray = input_noise_var
@@ -68,6 +70,8 @@ class Simulation(object):
         return self._environment.target_position
 
     def check_render_next(self) -> None:
+        if not self._render:
+            return
         started = False
         while not started:
             for event in pygame.event.get():
@@ -77,6 +81,8 @@ class Simulation(object):
                     started = True
 
     def check_end_sim(self) -> None:
+        if not self._render:
+            return
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT: 
@@ -114,7 +120,10 @@ class Simulation(object):
                 print("Control action invalid for environment")
                 break
 
-            print("State error", self._environment.agent_state - self._agent.state)
+            # print("State error", self._environment.agent_state - self._agent.state)
+            # print(self._agent._current_stop)
+            # print(control_action)
+            # print(self._environment.agent_state)
 
             # render
             if self._render:
@@ -167,6 +176,70 @@ class Simulation(object):
         scaled_target = (scale_x(self.target[0]), scale_y(self.target[1]))
         pygame.draw.circle(self._screen, self._color_dict["green"], scaled_target, 3)
 
+    def draw_map(self, map_rect: pygame.Rect) -> None:
+
+        pygame.draw.rect(self._screen, self._color_dict["gray"], map_rect, 1)
+
+        map_image = Image.fromarray((self._agent.binary_map*255).astype(np.uint8))
+        map_image = map_image.rotate(90)
+        map_image = map_image.convert("RGB")
+        map_image = map_image.resize((map_rect.width, map_rect.height), Image.NEAREST)
+        # map_image.show()
+        surface = pygame.image.fromstring(map_image.tobytes(), map_image.size, map_image.mode).convert()
+
+        self._screen.blit(surface, map_rect)
+
+        # map_size = self._agent.binary_map.shape
+
+        # # compute grid cell sizing
+        # # in pygame, first coordinate is horizontal
+        # horizontal_width = map_rect.width // map_size[0]
+        # vertical_width = map_rect.height // map_size[1]
+
+        # cell_width = min(horizontal_width, vertical_width)
+
+        # curr_corner = np.array([map_rect.left, map_rect.top])
+
+        # cells = [] # used to store all the drawn rectangles
+
+        # for i in range(map_size[0]):
+        #     cells.append([])
+        #     for j in range(map_size[1]):
+        #         # set cell fill color base on cell status
+        #         cell_status = self._agent.binary_map[i,j]
+        #         if cell_status == GridStatus.OBSTACLE:
+        #             c = self._color_dict["brown"]
+        #         # else:
+        #         #     c = self._color_dict["black"]
+        #         # set location
+        #             rect = pygame.Rect(curr_corner[0], curr_corner[1], cell_width, cell_width)
+        #             cells[-1].append(rect)
+        #             # draw the cell
+        #             pygame.draw.rect(self._screen, c, rect)
+        #         # draw cell border
+        #         # pygame.draw.rect(self._screen, self._color_dict["gray"], rect, 1)
+        #         curr_corner += np.array([0,cell_width])
+        #     curr_corner[1] = map_rect.top
+        #     curr_corner += np.array([cell_width,0])
+
+        # draw the scan border
+        # corner = np.array([map_rect.left, map_rect.top])
+        # corner += np.array([self.agent.pos[1]-1, self.agent.pos[0]-1]) * cell_width
+        # scan_width = 3 * cell_width
+        # pygame.draw.rect(self.screen, self.color_dict["red"], pygame.Rect(corner[0], corner[1], scan_width, scan_width), 2)
+
+        # draw the agent's planned path
+        # path = self.agent.get_path()
+        # if path.shape[0] != 0:
+        #     for k in range(path.shape[0]-1):
+        #         curr_coord = path[k]
+        #         next_coord = path[k+1]
+        #         if self.agent.in_bounds(curr_coord) and self.agent.in_bounds(next_coord):
+        #             pygame.draw.line(self.screen, self.color_dict["purple"], 
+        #                 cells[curr_coord[0]][curr_coord[1]].center, cells[next_coord[0]][next_coord[1]].center, 3)
+        #         else:
+        #             break
+
     def render_frame(self) -> None:
         if not self._render:
             return
@@ -200,26 +273,26 @@ class Simulation(object):
         pygame.draw.rect(self._screen, self._color_dict["black"], 
                 pygame.Rect((self._window_size[0]-self._center_col_width)//2, 0, self._center_col_width, self._window_size[1]))
 
-        # # draw the agent's map
-        # map_rect = pygame.Rect(sub_figure_width + self.center_col_width,
-        #                         self.render_offset.top, 
-        #                         sub_figure_width, 
-        #                         sub_fugure_height)
-        # self.draw_map(map_rect)
+        # draw the agent's map
+        map_rect = pygame.Rect(sub_figure_width + self._center_col_width,
+                                self._render_offset.top, 
+                                sub_figure_width, 
+                                sub_fugure_height)
+        self.draw_map(map_rect)
 
-        # # map status label text
-        # map_label_rect = pygame.Rect((self.window_size[0]-self.center_col_width)//2 + self.center_col_width, 0,
-        #                                 (self.window_size[0]-self.center_col_width)//2, self.render_offset.top)
-        # self.screen.fill(self.color_dict["black"], map_label_rect)
-        # my_font = pygame.font.SysFont("Times New Roman", 30)
-        # my_text = my_font.render("Agent Map", True, self.color_dict["white"])
-        # my_rect = my_text.get_rect()
-        # width = my_rect.width
-        # height = my_rect.height
-        # self.screen.blit(my_text, (map_label_rect.centerx - width//2, map_label_rect.centery - height//2))
+        # map status label text
+        map_label_rect = pygame.Rect((self._window_size[0]-self._center_col_width)//2 + self._center_col_width, 0,
+                                        (self._window_size[0]-self._center_col_width)//2, self._render_offset.top)
+        self._screen.fill(self._color_dict["black"], map_label_rect)
+        my_font = pygame.font.SysFont("Times New Roman", 30)
+        my_text = my_font.render("Agent Map", True, self._color_dict["white"])
+        my_rect = my_text.get_rect()
+        width = my_rect.width
+        height = my_rect.height
+        self._screen.blit(my_text, (map_label_rect.centerx - width//2, map_label_rect.centery - height//2))
 
         pygame.display.flip()
-        self._clock.tick(self._FPS)
+        # self._clock.tick(self._FPS)
 
 
 if __name__ == "__main__":
@@ -239,7 +312,7 @@ if __name__ == "__main__":
     # velocity input
     Mot = DifferentialDriveVelocityInput(sampling_period=0.01)
     Con = PVelocityController(Mot)
-    Est = PoseEstimator(Mot, Map, input_noise_var)
+    Est = PoseEstimator(Mot, Map, input_noise_var, num_particles=2)
     
     # Pla = A_Star_Planner(Map, neighbor_func=get_8_neighbors, safety_margin=1)
 
@@ -261,9 +334,6 @@ if __name__ == "__main__":
                      render=True, window_size=(1050, 550), FPS=100, render_offset=Offset(50,0,0,0), center_col_width=50)
 
     Sim.render_frame()
-
     Sim.check_render_next()
-
     Sim.run_sim()
-
     Sim.check_end_sim()

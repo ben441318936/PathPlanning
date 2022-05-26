@@ -158,6 +158,10 @@ class SearchBasedPlanner(Planner):
             # no need to check for collision
             if self._map.old_map_valid and not self._path_idx_changed:
                 return True
+            elif self._path.shape[0] != 1 and self._path_idx + 1 >= self._path.shape[0] and np.sum(np.abs(self._path[0] - self._path[1])) != 0:
+                # we have reached the end, start and stop are not the same
+                # force a replan
+                return False
             else:
                 self._path_idx_changed = False
                 # check the line from current location to next stop
@@ -242,9 +246,11 @@ class SearchBasedPlanner(Planner):
             return False
     
     def next_stop(self) -> np.ndarray:
-        # wstart and target are in the same postion
+        # start and target are in the same postion
         # or we have reached the end, keep outputting the target position
-        if self._path_idx + 1 >= self._path.shape[0]:
+        if (self._path.shape[0] == 1):
+            self._path_idx = -1
+        elif (self._path_idx + 1 >= self._path.shape[0] and np.sum(np.abs(self._path[0] - self._path[1])) == 0):
             self._path_idx -= 1
         # output the next stop, force a collision check next time we check path valid
         else:

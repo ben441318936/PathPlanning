@@ -75,14 +75,16 @@ class Agent(ABC):
 
     def control(self, tol: float = 0.5) -> dict:
         if self._current_stop is None or not self._planner.path_valid(self.position):
+            # print("Replanning at", self.position)
             if self._planner.plan(self.position, self.target):
+                # print("New path", self.path)
                 self._current_stop = self._planner.next_stop()
             else:
                 print("Couldn't plan a path from", self.position, "to", self.target)
                 exit()
         elif np.linalg.norm(self.position - self._current_stop) < tol:
             self._current_stop = self._planner.next_stop()
-        c = self._controller.control(self.state, self._current_stop)
+        c = self._controller.control(self.state, self._current_stop, tol=tol)
         self._estimator.predict(c)
         return c
 

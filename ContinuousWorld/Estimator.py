@@ -154,13 +154,14 @@ class PoseEstimator(Estimator):
     def predict(self, control_input: dict) -> None:
         self._estimate_state = self._motion_model.step(self._estimate_state, control_input)
         # predict particles
-        v_w_noise = np.random.multivariate_normal(np.zeros((self._motion_model.input_dim)), self._velocity_cov, self._num_particles)
-        control_inputs = control_input.copy()
-        control_inputs["v"] = control_inputs["v"] + v_w_noise[:,0]
-        control_inputs["w"] = control_inputs["w"] + v_w_noise[:,1]
-        self._particles = self._motion_model.step(self._particles, control_inputs)
+        # v_w_noise = np.random.multivariate_normal(np.zeros((self._motion_model.input_dim)), self._velocity_cov, self._num_particles)
+        # control_inputs = control_input.copy()
+        # control_inputs["v"] = control_inputs["v"] + v_w_noise[:,0]
+        # control_inputs["w"] = control_inputs["w"] + v_w_noise[:,1]
+        # self._particles = self._motion_model.step(self._particles, control_inputs)
 
     def update(self, observation: dict) -> None:
+        return
         if "LIDAR" in observation:
             corrs = self._compute_scan_correlations(observation["LIDAR"])
             self._estimate_state = self._particles[np.argmax(corrs),:]
